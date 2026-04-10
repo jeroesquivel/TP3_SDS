@@ -1,3 +1,5 @@
+package simulation;
+
 import java.util.List;
 
 /**
@@ -48,3 +50,4 @@ public class SimulationResult {
         this.events           = events;
     }
 }
+

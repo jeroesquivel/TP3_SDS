@@ -1,3 +1,8 @@
+package visualization;
+
+import simulation.Particle;
+import simulation.Simulator;
+
 import javax.swing.*;
 import java.awt.*;
 import java.awt.event.*;
@@ -33,6 +38,7 @@ public class Visualizer extends JPanel {
     private static final Color  COLOR_BG       = new Color(0xf5f6fa);
     private static final int    PANEL_SIZE     = 700;
     private static final double R_RECINTO      = 40.0;
+    private static final int    TIMELINE_STEPS = 10_000;
 
     // ── Datos de la animación ─────────────────────────────────────────────────
     /** Cada frame: { t, double[N][6]{ x,y,vx,vy,state,_ } } */
@@ -40,13 +46,20 @@ public class Visualizer extends JPanel {
     private final int N;
     private final double tStart;
     private final double tEnd;
-    private final double playbackRate;
+    private final double basePlaybackRate;
 
     private int currentFrame = 0;
     private double playheadTime;
     private long lastTickNanos;
     private boolean paused = false;
+    private double playbackMultiplier = 1.0;
+    private int tickMs;
+    private boolean timelineAdjusting = false;
+
     private javax.swing.Timer timer;
+    private JSlider timelineSlider;
+    private JButton pauseButton;
+    private JButton fastForwardButton;
 
     // ── Constructor ───────────────────────────────────────────────────────────
 
@@ -57,52 +70,16 @@ public class Visualizer extends JPanel {
         this.tEnd = frames.get(frames.size() - 1)[0][0];
         this.playheadTime = tStart;
         double avgFrameDt = (tEnd - tStart) / Math.max(1, frames.size() - 1);
-        this.playbackRate = (intervalMs > 0) ? (avgFrameDt * 1000.0 / intervalMs) : 1.0;
+        this.basePlaybackRate = (intervalMs > 0) ? (avgFrameDt * 1000.0 / intervalMs) : 1.0;
+        this.tickMs = Math.max(10, intervalMs / 3);
 
         setPreferredSize(new Dimension(PANEL_SIZE, PANEL_SIZE));
         setBackground(COLOR_BG);
         setFocusable(true);
 
-        // Controles de teclado
-        addKeyListener(new KeyAdapter() {
-            @Override public void keyPressed(KeyEvent e) {
-                switch (e.getKeyCode()) {
-                    case KeyEvent.VK_SPACE:
-                        paused = !paused;
-                        if (!paused) {
-                            lastTickNanos = System.nanoTime();
-                            if (!timer.isRunning()) timer.start();
-                        }
-                        break;
-                    case KeyEvent.VK_RIGHT:
-                        if (paused) {
-                            advanceFrame(1);
-                            repaint();
-                        }
-                        break;
-                    case KeyEvent.VK_LEFT:
-                        if (paused) {
-                            advanceFrame(-1);
-                            repaint();
-                        }
-                        break;
-                    case KeyEvent.VK_R:
-                        currentFrame = 0;
-                        playheadTime = tStart;
-                        paused = false;
-                        lastTickNanos = System.nanoTime();
-                        if (!timer.isRunning()) timer.start();
-                        repaint();
-                        break;
-                    case KeyEvent.VK_Q:
-                        System.exit(0);
-                        break;
-                }
-            }
-        });
+        setupKeyBindings();
 
         // Use a stable EDT tick and interpolate between event frames for smoother motion.
-        int tickMs = Math.max(10, intervalMs / 3);
         lastTickNanos = System.nanoTime();
         timer = new javax.swing.Timer(tickMs, e -> {
             if (!paused) {
@@ -110,19 +87,206 @@ public class Visualizer extends JPanel {
                 double dt = (now - lastTickNanos) / 1e9;
                 lastTickNanos = now;
 
-                playheadTime += dt * playbackRate;
+                playheadTime += dt * basePlaybackRate * playbackMultiplier;
                 if (playheadTime >= tEnd) {
                     playheadTime = tEnd;
                 }
 
                 syncCurrentFrameWithPlayhead();
+                syncTimelineFromPlayhead();
                 repaint();
                 if (playheadTime >= tEnd) {
                     timer.stop();
+                    paused = true;
+                    refreshButtonLabels();
                 }
             }
         });
         timer.start();
+    }
+
+    private void setupKeyBindings() {
+        bindKey("SPACE", () -> togglePause());
+        bindKey("RIGHT", () -> {
+            if (paused) {
+                advanceFrame(1);
+                syncTimelineFromPlayhead();
+                repaint();
+            }
+        });
+        bindKey("LEFT", () -> {
+            if (paused) {
+                advanceFrame(-1);
+                syncTimelineFromPlayhead();
+                repaint();
+            }
+        });
+        bindKey("R", this::restartPlayback);
+        bindKey("Q", () -> System.exit(0));
+    }
+
+    private void bindKey(String key, Runnable action) {
+        String actionKey = "viz." + key;
+        getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).put(KeyStroke.getKeyStroke(key), actionKey);
+        getActionMap().put(actionKey, new AbstractAction() {
+            @Override public void actionPerformed(ActionEvent e) { action.run(); }
+        });
+    }
+
+    public JPanel createControlBar(int intervalMs, int maxFrames) {
+        JPanel controls = new JPanel(new BorderLayout(8, 6));
+        controls.setBorder(BorderFactory.createEmptyBorder(6, 8, 8, 8));
+
+        timelineSlider = new JSlider(0, TIMELINE_STEPS, timeToSlider(playheadTime));
+        timelineSlider.addChangeListener(e -> {
+            if (timelineAdjusting) return;
+            if (timelineSlider.getValueIsAdjusting()) {
+                seekToTime(sliderToTime(timelineSlider.getValue()), true);
+            } else {
+                seekToTime(sliderToTime(timelineSlider.getValue()), false);
+            }
+        });
+        controls.add(timelineSlider, BorderLayout.NORTH);
+
+        JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+
+        pauseButton = new JButton("Pausa");
+        pauseButton.addActionListener(e -> togglePause());
+        row.add(pauseButton);
+
+        JButton restartButton = new JButton("Reiniciar");
+        restartButton.addActionListener(e -> restartPlayback());
+        row.add(restartButton);
+
+        fastForwardButton = new JButton("FF x1");
+        fastForwardButton.addActionListener(e -> cycleFastForward());
+        row.add(fastForwardButton);
+
+        JTextField timeField = new JTextField(7);
+        JButton seekButton = new JButton("Ir a t");
+        seekButton.addActionListener(e -> {
+            try {
+                double t = Double.parseDouble(timeField.getText().trim());
+                seekToTime(t, false);
+            } catch (NumberFormatException ex) {
+                // Ignorar valores invalidos para no cortar la reproduccion.
+            }
+        });
+        row.add(new JLabel("t [s]:"));
+        row.add(timeField);
+        row.add(seekButton);
+
+        JTextField rateField = new JTextField("1.0", 4);
+        JButton setRateButton = new JButton("Set rate");
+        setRateButton.addActionListener(e -> {
+            try {
+                double rate = Double.parseDouble(rateField.getText().trim());
+                if (rate > 0) {
+                    playbackMultiplier = rate;
+                    refreshButtonLabels();
+                }
+            } catch (NumberFormatException ex) {
+                // Ignorar valores invalidos.
+            }
+        });
+        row.add(new JLabel("rate x:"));
+        row.add(rateField);
+        row.add(setRateButton);
+
+        JTextField tickField = new JTextField(String.valueOf(intervalMs), 4);
+        JButton setTickButton = new JButton("Set interval");
+        setTickButton.addActionListener(e -> {
+            try {
+                int interval = Integer.parseInt(tickField.getText().trim());
+                if (interval > 0) {
+                    applyIntervalMs(interval);
+                }
+            } catch (NumberFormatException ex) {
+                // Ignorar valores invalidos.
+            }
+        });
+        row.add(new JLabel("interval [ms]:"));
+        row.add(tickField);
+        row.add(setTickButton);
+
+        row.add(new JLabel("maxFrames=" + maxFrames));
+
+        controls.add(row, BorderLayout.CENTER);
+        refreshButtonLabels();
+        return controls;
+    }
+
+    private void togglePause() {
+        paused = !paused;
+        if (!paused) {
+            lastTickNanos = System.nanoTime();
+            if (!timer.isRunning()) timer.start();
+        }
+        refreshButtonLabels();
+    }
+
+    private void restartPlayback() {
+        currentFrame = 0;
+        playheadTime = tStart;
+        paused = false;
+        lastTickNanos = System.nanoTime();
+        if (!timer.isRunning()) timer.start();
+        syncTimelineFromPlayhead();
+        refreshButtonLabels();
+        repaint();
+    }
+
+    private void cycleFastForward() {
+        if (playbackMultiplier < 1.5) playbackMultiplier = 2.0;
+        else if (playbackMultiplier < 3.5) playbackMultiplier = 4.0;
+        else if (playbackMultiplier < 7.5) playbackMultiplier = 8.0;
+        else playbackMultiplier = 1.0;
+        refreshButtonLabels();
+    }
+
+    private void applyIntervalMs(int intervalMs) {
+        tickMs = Math.max(10, intervalMs / 3);
+        timer.setDelay(tickMs);
+        timer.setInitialDelay(tickMs);
+        lastTickNanos = System.nanoTime();
+    }
+
+    private void seekToTime(double targetTime, boolean pauseDuringDrag) {
+        if (pauseDuringDrag) paused = true;
+        playheadTime = Math.max(tStart, Math.min(tEnd, targetTime));
+        syncCurrentFrameWithPlayhead();
+        syncTimelineFromPlayhead();
+        refreshButtonLabels();
+        repaint();
+    }
+
+    private void syncTimelineFromPlayhead() {
+        if (timelineSlider == null) return;
+        timelineAdjusting = true;
+        timelineSlider.setValue(timeToSlider(playheadTime));
+        timelineAdjusting = false;
+    }
+
+    private int timeToSlider(double time) {
+        if (tEnd <= tStart) return 0;
+        double p = (time - tStart) / (tEnd - tStart);
+        p = Math.max(0.0, Math.min(1.0, p));
+        return (int) Math.round(p * TIMELINE_STEPS);
+    }
+
+    private double sliderToTime(int sliderValue) {
+        if (tEnd <= tStart) return tStart;
+        double p = sliderValue / (double) TIMELINE_STEPS;
+        return tStart + p * (tEnd - tStart);
+    }
+
+    private void refreshButtonLabels() {
+        if (pauseButton != null) {
+            pauseButton.setText(paused ? "Reanudar" : "Pausa");
+        }
+        if (fastForwardButton != null) {
+            fastForwardButton.setText(String.format("FF x%.1f", playbackMultiplier));
+        }
     }
 
     private void advanceFrame(int delta) {
@@ -163,9 +327,11 @@ public class Visualizer extends JPanel {
         // Interpolated simulation time shown in HUD.
         double t = tA + alpha * (tB - tA);
 
-        int    cx   = PANEL_SIZE / 2;
-        int    cy   = PANEL_SIZE / 2;
-        double scale = (PANEL_SIZE / 2.0 - 10) / R_RECINTO;
+        int    canvasW = getWidth();
+        int    canvasH = getHeight();
+        int    cx      = canvasW / 2;
+        int    cy      = canvasH / 2;
+        double scale   = (Math.min(canvasW, canvasH) / 2.0 - 10) / R_RECINTO;
 
         // ── Recinto ───────────────────────────────────────────────────────────
         g2.setColor(COLOR_WALL);
@@ -203,18 +369,19 @@ public class Visualizer extends JPanel {
         g2.setFont(new Font("Monospaced", Font.PLAIN, 13));
         g2.drawString(String.format("t = %.4f s", t), 10, 18);
         g2.drawString(String.format("frame %d / %d", currentFrame + 1, frames.size()), 10, 34);
-        g2.drawString(paused ? "[PAUSA]" : "[▶]", 10, 50);
+        g2.drawString(paused ? "[PAUSA]" : "[> ]", 10, 50);
+        g2.drawString(String.format("rate x%.1f", playbackMultiplier), 10, 66);
 
         // Leyenda
         g2.setColor(COLOR_FRESH);
-        g2.fillRect(PANEL_SIZE - 110, 10, 14, 14);
+        g2.fillRect(canvasW - 110, 10, 14, 14);
         g2.setColor(Color.DARK_GRAY);
-        g2.drawString("fresca", PANEL_SIZE - 92, 22);
+        g2.drawString("fresca", canvasW - 92, 22);
 
         g2.setColor(COLOR_USED);
-        g2.fillRect(PANEL_SIZE - 110, 30, 14, 14);
+        g2.fillRect(canvasW - 110, 30, 14, 14);
         g2.setColor(Color.DARK_GRAY);
-        g2.drawString("usada",  PANEL_SIZE - 92, 42);
+        g2.drawString("usada",  canvasW - 92, 42);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -303,17 +470,19 @@ public class Visualizer extends JPanel {
 
         int N = (int) frames.get(0)[0][1];
 
-        JFrame window = new JFrame("EDMD — Recinto Circular  (N=" + N + ")");
+        JFrame window = new JFrame("EDMD - Recinto Circular  (N=" + N + ")");
         window.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         window.setResizable(false);
+        window.setLayout(new BorderLayout());
 
         Visualizer viz = new Visualizer(frames, N, interval);
-        window.add(viz);
+        window.add(viz, BorderLayout.CENTER);
+        window.add(viz.createControlBar(interval, maxFrames), BorderLayout.SOUTH);
         window.pack();
         window.setLocationRelativeTo(null);
         window.setVisible(true);
         viz.requestFocusInWindow();
 
-        System.out.println("Controles: ESPACIO=pausa  ←/→=frame  R=reiniciar  Q=cerrar");
+        System.out.println("Controles: barra de timeline + botones; teclado: ESPACIO, <-/->, R, Q");
     }
 }

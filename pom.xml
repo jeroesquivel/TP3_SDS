@@ -14,8 +14,15 @@
     </properties>
 
     <build>
-        <!-- Keep current project layout (sources in src/) without moving files. -->
+        <!-- Sources in src/ organized by packages: simulation, analysis, visualization -->
         <sourceDirectory>${project.basedir}/src</sourceDirectory>
+        <!--
+        Entrypoints disponibles:
+          mvn exec:java -Dexec.mainClass=Main                                     (launcher gráfico)
+          mvn exec:java -Dexec.mainClass=simulation.SimulationCli -Dexec.args="..." (simulación CLI)
+          mvn exec:java -Dexec.mainClass=analysis.Analysis -Dexec.args="..."      (análisis CLI)
+          mvn exec:java -Dexec.mainClass=visualization.Visualizer -Dexec.args="..."(visualización CLI)
+        -->
 
         <plugins>
             <plugin>

@@ -1,3 +1,5 @@
+package simulation;
+
 import java.io.*;
 import java.util.*;
 
@@ -409,9 +411,9 @@ public class Simulator {
     // ─────────────────────────────────────────────────────────────────────────
 
     private void writeFrame(PrintWriter w, double t) {
-        w.printf("%d %.8f%n", N, t);
+        w.printf(Locale.US, "%d %.8f%n", N, t);
         for (Particle p : particles) {
-            w.printf("%.8f %.8f %.8f %.8f %.8f %d%n",
+            w.printf(Locale.US, "%.8f %.8f %.8f %.8f %.8f %d%n",
                      t, p.x, p.y, p.vx, p.vy, p.state);
         }
     }

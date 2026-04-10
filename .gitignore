@@ -4,3 +4,5 @@ target/
 *.iml
 results/
 *.txt
+*.md
+*.json

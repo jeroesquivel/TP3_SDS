@@ -1,3 +1,5 @@
+package simulation;
+
 /**
  * Representa una partícula móvil en el recinto circular.
  * Mantiene posición, velocidad, estado (fresca/usada) y contador de colisiones
@@ -38,3 +40,4 @@ public class Particle {
         return Math.sqrt(vx * vx + vy * vy);
     }
 }
+

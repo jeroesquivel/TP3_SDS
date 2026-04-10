@@ -1,3 +1,9 @@
+package analysis;
+
+import simulation.Particle;
+import simulation.SimulationResult;
+import simulation.Simulator;
+
 import java.io.*;
 import java.util.*;
 

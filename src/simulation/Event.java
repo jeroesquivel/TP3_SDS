@@ -1,3 +1,5 @@
+package simulation;
+
 /**
  * Representa un evento de colisión en la priority queue.
  *
