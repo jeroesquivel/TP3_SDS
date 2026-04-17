@@ -7,6 +7,8 @@ import simulation.Simulator;
 import java.io.*;
 import java.util.*;
 
+//TODO borrar esta clase
+
 /**
  * Módulo de análisis de observables para el TP3.
  *

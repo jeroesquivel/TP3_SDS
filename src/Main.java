@@ -336,7 +336,7 @@ public class Main {
         }
 
         private void openVisualizer() {
-            final String file = vizFile.getText().trim();
+            final String file = "simulations/sim_N_50_run_3.txt"; //vizFile.getText().trim();
             final int interval;
             final int maxFrames;
             try {
