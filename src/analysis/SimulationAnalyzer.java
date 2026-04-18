@@ -16,6 +16,12 @@ public class SimulationAnalyzer {
 
     /**
      * Full analysis pipeline.
+     * <p>
+     * Streaming implementation: the input file is read snapshot-by-snapshot and
+     * Cfc, Fu and radial outputs are emitted as we go. Nothing is accumulated
+     * in memory except the previous-snapshot colour array (length N) and a
+     * small bucket map per snapshot. This is necessary for large runs
+     * (e.g. N=800, tf=1000) where the full trajectory does not fit in RAM.
      *
      * @param inputFilePath path to the simulator output file
      * @param dS            radial shell width in metres (section 1.4)
@@ -37,290 +43,207 @@ public class SimulationAnalyzer {
         String fuPath      = "results/fu_"      + baseName + ".txt";
         String radialPath  = "results/radial_"  + baseName + ".txt";
 
-        // -----------------------------------------------------------------------
-        // Parse all time steps from the input file
-        // -----------------------------------------------------------------------
-        List<TimeStep> timeSteps = parseFile(inputFilePath);
-        if (timeSteps.isEmpty()) {
-            throw new IOException("No time steps found in " + inputFilePath);
-        }
-
-        int N = timeSteps.get(0).particles.size();
         System.out.println("File: " + inputFilePath);
-        System.out.println("  Time steps : " + timeSteps.size());
-        System.out.println("  Particles  : " + N);
-        System.out.println("  Shell width: " + dS + " m");
+        System.out.println("  Shell width: " + dS + " m  (streaming mode)");
 
         // -----------------------------------------------------------------------
-        // 1.2 — Cumulative fresh→used transitions  Cfc(t)
-        //
-        // A fresh particle (color=0) that appears as used (color=1) in the next
-        // time step has just collided with the central obstacle.
-        // We track each particle's color across consecutive snapshots.
+        // Single streaming pass: read snapshot by snapshot; write Cfc, Fu and
+        // radial outputs concurrently. Only one Snapshot lives in memory at a
+        // time, plus a prevColor[] array of length N.
         // -----------------------------------------------------------------------
-        writeCfc(timeSteps, N, cfcPath);
-        System.out.println("  Written: " + cfcPath);
-
-        // -----------------------------------------------------------------------
-        // 1.3 — Fraction of used particles  Fu(t) = Nu(t)/N
-        // -----------------------------------------------------------------------
-        writeFu(timeSteps, N, fuPath);
-        System.out.println("  Written: " + fuPath);
-
-        // -----------------------------------------------------------------------
-        // 1.4 — Radial profiles of inward-moving fresh particles
-        //
-        // For every snapshot, consider only fresh particles (color=0) whose
-        // radial velocity points inward (R·v < 0).  Bin them by distance from
-        // the origin S = |R|.  For each shell:
-        //   rho_fin(S)  = count / shellArea
-        //   v_fin(S)    = mean( R·v / |R| )   (component along -R, i.e. inward)
-        //   J_in(S)     = rho_fin * |v_fin|
-        //
-        // The file contains one block per snapshot so the calling code can
-        // average across time steps and/or realizations externally if needed.
-        // -----------------------------------------------------------------------
-        writeRadial(timeSteps, dS, radialPath);
-        System.out.println("  Written: " + radialPath);
-    }
-
-    // -----------------------------------------------------------------------
-    // Parsing
-    // -----------------------------------------------------------------------
-
-    /** Represents all particles at a single recorded time. */
-    private static class Particle {
-        final double x, y, vx, vy;
-        final int color; // 0 = fresh, 1 = used
-
-        Particle(double x, double y, double vx, double vy, int color) {
-            this.x = x; this.y = y;
-            this.vx = vx; this.vy = vy;
-            this.color = color;
-        }
-    }
-
-    private static class TimeStep {
-        final double time;
-        final List<Particle> particles;
-
-        TimeStep(double time, List<Particle> particles) {
-            this.time = time;
-            this.particles = particles;
-        }
-    }
-
-    /**
-     * Parses the output file.
-     *
-     * Expected format (repeated for each event):
-     *   N  t
-     *   t  x  y  vx  vy  color
-     *   ... (N lines)
-     */
-    private static List<TimeStep> parseFile(String filePath) throws IOException {
-        List<TimeStep> steps = new ArrayList<>();
-
-        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-
-                // Header line: two tokens — N and t
-                String[] headerTokens = line.split("\\s+");
-                if (headerTokens.length != 2) continue; // skip unexpected lines
-
-                int n;
-                double t;
-                try {
-                    n = Integer.parseInt(headerTokens[0]);
-                    t = Double.parseDouble(headerTokens[1]);
-                } catch (NumberFormatException e) {
-                    continue; // not a header line
-                }
-
-                List<Particle> particles = new ArrayList<>(n);
-                for (int i = 0; i < n; i++) {
-                    String pLine = br.readLine();
-                    if (pLine == null) break;
-                    pLine = pLine.trim();
-                    String[] tok = pLine.split("\\s+");
-                    if (tok.length < 6) continue;
-                    // tok[0] = time (redundant), tok[1..4] = x y vx vy, tok[5] = color
-                    double px  = Double.parseDouble(tok[1]);
-                    double py  = Double.parseDouble(tok[2]);
-                    double pvx = Double.parseDouble(tok[3]);
-                    double pvy = Double.parseDouble(tok[4]);
-                    int    col = Integer.parseInt(tok[5]);
-                    particles.add(new Particle(px, py, pvx, pvy, col));
-                }
-                steps.add(new TimeStep(t, particles));
-            }
-        }
-        return steps;
-    }
-
-    // -----------------------------------------------------------------------
-    // 1.2 — Cfc(t)
-    // -----------------------------------------------------------------------
-
-    /**
-     * Writes cumulative fresh→used transitions over time.
-     *
-     * A transition is detected when particle i changes from color=0 to color=1
-     * between two consecutive snapshots.  This corresponds to a collision with
-     * the central obstacle (radius r0=1, particle radius r=1; contact distance=2).
-     *
-     * Output format (tab-separated, one row per snapshot):
-     *   t   Cfc
-     */
-    private static void writeCfc(List<TimeStep> steps, int N, String outPath) throws IOException {
-        // Track previous colors; initialize from first snapshot
-        int[] prevColor = new int[N];
-        List<Particle> first = steps.get(0).particles;
-        for (int i = 0; i < Math.min(N, first.size()); i++) {
-            prevColor[i] = first.get(i).color;
-        }
-
-        long cumulativeCount = 0;
-
-        try (PrintWriter pw = new PrintWriter(new BufferedWriter(new FileWriter(outPath)))) {
-            pw.println("# t\tCfc");
-            // Write initial state
-            pw.printf("%.8f\t%d%n", steps.get(0).time, cumulativeCount);
-
-            for (int s = 1; s < steps.size(); s++) {
-                TimeStep step = steps.get(s);
-                List<Particle> parts = step.particles;
-                int size = Math.min(N, parts.size());
-
-                for (int i = 0; i < size; i++) {
-                    int curColor = parts.get(i).color;
-                    // Transition: was fresh (0) → now used (1) means it just hit the center
-                    if (prevColor[i] == 0 && curColor == 1) {
-                        cumulativeCount++;
-                    }
-                    prevColor[i] = curColor;
-                }
-                pw.printf("%.8f\t%d%n", step.time, cumulativeCount);
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // 1.3 — Fu(t)
-    // -----------------------------------------------------------------------
-
-    /**
-     * Writes the fraction of used particles over time.
-     *
-     * Output format (tab-separated):
-     *   t   Nu   Fu
-     */
-    private static void writeFu(List<TimeStep> steps, int N, String outPath) throws IOException {
-        try (PrintWriter pw = new PrintWriter(new BufferedWriter(new FileWriter(outPath)))) {
-            pw.println("# t\tNu\tFu");
-            for (TimeStep step : steps) {
-                int nu = 0;
-                for (Particle p : step.particles) {
-                    if (p.color == 1) nu++;
-                }
-                double fu = (N > 0) ? (double) nu / N : 0.0;
-                pw.printf("%.8f\t%d\t%.8f%n", step.time, nu, fu);
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // 1.4 — Radial profiles
-    // -----------------------------------------------------------------------
-
-    /**
-     * Writes radial density and velocity profiles for inward-moving fresh particles.
-     *
-     * For each snapshot, only fresh particles (color=0) with R·v < 0 (inward) are
-     * considered.  They are binned by S = |R| into shells of width dS starting from
-     * the obstacle surface (S_min = OBSTACLE_RADIUS + PARTICLE_RADIUS = 2 m).
-     *
-     * Shell area = π((S + dS/2)² − (S − dS/2)²) = 2π·S·dS
-     *
-     * Variables per shell:
-     *   rho_fin  = count / shellArea                      [1/m²]
-     *   v_fin    = mean inward radial speed = mean(R·v/|R|) (negative since inward)
-     *   J_in     = rho_fin * |v_fin|
-     *
-     * Output format — one header, then blocks separated by blank line:
-     *   # STEP t=...   N_fresh_in=...
-     *   S_center   count   rho_fin   v_fin   J_in
-     */
-    private static void writeRadial(List<TimeStep> steps, double dS, String outPath) throws IOException {
-
-        // S starts from the contact distance between a particle and the obstacle
         double S_min = OBSTACLE_RADIUS + PARTICLE_RADIUS; // 2.0 m
 
-        try (PrintWriter pw = new PrintWriter(new BufferedWriter(new FileWriter(outPath)))) {
-            pw.println("# Radial profiles of inward-moving fresh particles");
-            pw.println("# Shell width dS = " + dS + " m");
-            pw.println("# Columns: S_center  count  rho_fin[1/m^2]  v_fin[m/s]  J_in[1/(m^2*s)]");
-            pw.println("#");
+        int[] prevColor = null;
+        long cumulativeCfc = 0;
+        int  snapshotsSeen = 0;
+        int  N             = 0;
 
-            for (TimeStep step : steps) {
-                // Collect inward-moving fresh particles
-                // Key: shell index (S_min + k*dS to S_min + (k+1)*dS)
-                // Using a TreeMap to keep shells sorted
-                TreeMap<Integer, ShellAccumulator> shells = new TreeMap<>();
+        try (BufferedReader br = new BufferedReader(new FileReader(inputFilePath), 1 << 20);
+             PrintWriter cfcW = new PrintWriter(new BufferedWriter(new FileWriter(cfcPath)));
+             PrintWriter fuW  = new PrintWriter(new BufferedWriter(new FileWriter(fuPath)));
+             PrintWriter radW = new PrintWriter(new BufferedWriter(new FileWriter(radialPath)))) {
 
-                int freshInCount = 0;
-                for (Particle p : step.particles) {
-                    if (p.color != 0) continue; // only fresh
+            cfcW.println("# t\tCfc");
+            fuW.println("# t\tNu\tFu");
+            radW.println("# Radial profiles of inward-moving fresh particles");
+            radW.println("# Shell width dS = " + dS + " m");
+            radW.println("# Columns: S_center  count  rho_fin[1/m^2]  v_fin[m/s]  J_in[1/(m^2*s)]");
+            radW.println("#");
 
-                    double R = Math.sqrt(p.x * p.x + p.y * p.y);
-                    if (R == 0) continue;
-
-                    double RdotV = p.x * p.vx + p.y * p.vy;
-                    if (RdotV >= 0) continue; // not inward
-
-                    freshInCount++;
-
-                    // Shell index: 0 corresponds to [S_min, S_min+dS)
-                    int shellIdx = (int) Math.floor((R - S_min) / dS);
-                    if (shellIdx < 0) shellIdx = 0; // clamp to surface shell
-
-                    double v_normal = RdotV / R; // inward component (negative)
-                    shells.computeIfAbsent(shellIdx, k -> new ShellAccumulator()).add(v_normal);
+            Snapshot snap;
+            while ((snap = readSnapshot(br)) != null) {
+                if (snapshotsSeen == 0) {
+                    N = snap.n;
+                    prevColor = new int[N];
+                    for (int i = 0; i < Math.min(N, snap.color.length); i++) {
+                        prevColor[i] = snap.color[i];
+                    }
+                    // 1.2 — initial Cfc row (0)
+                    cfcW.printf(Locale.US, "%.8f\t%d%n", snap.time, cumulativeCfc);
+                } else {
+                    // 1.2 — count fresh→used transitions vs. previous snapshot
+                    int size = Math.min(N, snap.color.length);
+                    for (int i = 0; i < size; i++) {
+                        if (prevColor[i] == 0 && snap.color[i] == 1) {
+                            cumulativeCfc++;
+                        }
+                        prevColor[i] = snap.color[i];
+                    }
+                    cfcW.printf(Locale.US, "%.8f\t%d%n", snap.time, cumulativeCfc);
                 }
 
-                pw.printf("# STEP t=%.8f  N_fresh_in=%d%n", step.time, freshInCount);
-
-                if (shells.isEmpty()) {
-                    pw.println("# (no inward fresh particles at this time step)");
-                    pw.println();
-                    continue;
+                // 1.3 — Fu(t)
+                int nu = 0;
+                for (int i = 0; i < snap.n; i++) {
+                    if (snap.color[i] == 1) nu++;
                 }
+                double fu = (N > 0) ? (double) nu / N : 0.0;
+                fuW.printf(Locale.US, "%.8f\t%d\t%.8f%n", snap.time, nu, fu);
 
-                for (Map.Entry<Integer, ShellAccumulator> entry : shells.entrySet()) {
-                    int idx = entry.getKey();
-                    ShellAccumulator acc = entry.getValue();
+                // 1.4 — radial profile for this snapshot
+                writeRadialSnapshot(radW, snap, dS, S_min);
 
-                    // Shell centre
-                    double S_inner  = S_min + idx * dS;
-                    double S_outer  = S_inner + dS;
-                    double S_center = (S_inner + S_outer) / 2.0;
-
-                    // Shell area = π(R_outer² - R_inner²) = 2π * S_center * dS
-                    double shellArea = 2.0 * Math.PI * S_center * dS;
-
-                    double rho_fin = acc.count / shellArea;
-                    double v_fin   = acc.sumV / acc.count; // mean (negative)
-                    double J_in    = rho_fin * Math.abs(v_fin);
-
-                    pw.printf("%.4f\t%d\t%.8f\t%.8f\t%.8f%n",
-                            S_center, acc.count, rho_fin, v_fin, J_in);
-                }
-                pw.println(); // blank line between snapshots
+                snapshotsSeen++;
             }
         }
+
+        System.out.println("  Time steps : " + snapshotsSeen);
+        System.out.println("  Particles  : " + N);
+        System.out.println("  Written: " + cfcPath);
+        System.out.println("  Written: " + fuPath);
+        System.out.println("  Written: " + radialPath);
+
+        if (snapshotsSeen == 0) {
+            throw new IOException("No time steps found in " + inputFilePath);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Streaming parsing — one snapshot at a time
+    // -----------------------------------------------------------------------
+
+    /** A single snapshot. Arrays of length n (not full history). */
+    private static class Snapshot {
+        double time;
+        int    n;
+        double[] x, y, vx, vy;
+        int[]    color;
+
+        Snapshot(int n, double time) {
+            this.n     = n;
+            this.time  = time;
+            this.x     = new double[n];
+            this.y     = new double[n];
+            this.vx    = new double[n];
+            this.vy    = new double[n];
+            this.color = new int[n];
+        }
+    }
+
+    /**
+     * Reads the next snapshot from the trajectory file. Returns null at EOF.
+     * Expected repeating block:
+     *   N  t
+     *   t  x  y  vx  vy  color    ×N
+     */
+    private static Snapshot readSnapshot(BufferedReader br) throws IOException {
+        String line;
+        while ((line = br.readLine()) != null) {
+            line = line.trim();
+            if (line.isEmpty()) continue;
+
+            String[] header = line.split("\\s+");
+            if (header.length != 2) continue; // skip unexpected lines
+
+            int n;
+            double t;
+            try {
+                n = Integer.parseInt(header[0]);
+                t = Double.parseDouble(header[1]);
+            } catch (NumberFormatException e) {
+                continue; // not a header line
+            }
+
+            Snapshot snap = new Snapshot(n, t);
+            int read = 0;
+            for (int i = 0; i < n; i++) {
+                String pLine = br.readLine();
+                if (pLine == null) break;
+                pLine = pLine.trim();
+                if (pLine.isEmpty()) { i--; continue; }
+                String[] tok = pLine.split("\\s+");
+                if (tok.length < 6) continue;
+                snap.x[read]     = Double.parseDouble(tok[1]);
+                snap.y[read]     = Double.parseDouble(tok[2]);
+                snap.vx[read]    = Double.parseDouble(tok[3]);
+                snap.vy[read]    = Double.parseDouble(tok[4]);
+                snap.color[read] = Integer.parseInt(tok[5]);
+                read++;
+            }
+            snap.n = read; // actual particles parsed
+            return snap;
+        }
+        return null;
+    }
+
+    // -----------------------------------------------------------------------
+    // 1.4 — per-snapshot radial profile writer
+    // -----------------------------------------------------------------------
+
+    /**
+     * Writes the radial profile block for a single snapshot. Only particles
+     * with color=0 (fresh) and R·v < 0 (inward) participate.
+     *
+     * Shell area = 2π · S_center · dS.
+     */
+    private static void writeRadialSnapshot(PrintWriter pw, Snapshot snap,
+                                            double dS, double S_min) {
+        TreeMap<Integer, ShellAccumulator> shells = new TreeMap<>();
+
+        int freshInCount = 0;
+        for (int i = 0; i < snap.n; i++) {
+            if (snap.color[i] != 0) continue; // only fresh
+            double x = snap.x[i], y = snap.y[i];
+            double R = Math.sqrt(x * x + y * y);
+            if (R == 0) continue;
+
+            double RdotV = x * snap.vx[i] + y * snap.vy[i];
+            if (RdotV >= 0) continue; // not inward
+
+            freshInCount++;
+
+            int shellIdx = (int) Math.floor((R - S_min) / dS);
+            if (shellIdx < 0) shellIdx = 0;
+
+            double v_normal = RdotV / R; // negative inward component
+            shells.computeIfAbsent(shellIdx, k -> new ShellAccumulator()).add(v_normal);
+        }
+
+        pw.printf(Locale.US, "# STEP t=%.8f  N_fresh_in=%d%n", snap.time, freshInCount);
+
+        if (shells.isEmpty()) {
+            pw.println("# (no inward fresh particles at this time step)");
+            pw.println();
+            return;
+        }
+
+        for (Map.Entry<Integer, ShellAccumulator> entry : shells.entrySet()) {
+            int idx = entry.getKey();
+            ShellAccumulator acc = entry.getValue();
+
+            double S_inner  = S_min + idx * dS;
+            double S_outer  = S_inner + dS;
+            double S_center = (S_inner + S_outer) / 2.0;
+
+            double shellArea = 2.0 * Math.PI * S_center * dS;
+            double rho_fin   = acc.count / shellArea;
+            double v_fin     = acc.sumV / acc.count;
+            double J_in      = rho_fin * Math.abs(v_fin);
+
+            pw.printf(Locale.US, "%.4f\t%d\t%.8f\t%.8f\t%.8f%n",
+                    S_center, acc.count, rho_fin, v_fin, J_in);
+        }
+        pw.println();
     }
 
     /** Accumulates particle count and sum of inward radial velocities for one shell. */

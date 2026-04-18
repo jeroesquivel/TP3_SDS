@@ -9,10 +9,13 @@ public class SimulationCli {
         int    N          = 100;
         double tf         = 5.0;
         String outputFile = "output.txt";
+        String analysisFile = null;
         Long   seed       = null;
         int    writeEvery = 1;
         int    snapEvery  = 0;
+        double radialSnapDt = 0.5;
         boolean noOutput  = false;
+        boolean stream    = false;
 
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -23,6 +26,9 @@ public class SimulationCli {
                 case "-w":           writeEvery = Integer.parseInt(args[++i]);  break;
                 case "--snap-every": snapEvery  = Integer.parseInt(args[++i]);  break;
                 case "--no-output":  noOutput   = true;                         break;
+                case "--stream":     stream     = true;                         break;
+                case "--analysis":   analysisFile = args[++i];                  break;
+                case "--snap-dt":    radialSnapDt = Double.parseDouble(args[++i]); break;
                 default:
                     System.err.println("Opción desconocida: " + args[i]);
                     printUsage();
@@ -32,21 +38,37 @@ public class SimulationCli {
 
         String out = noOutput ? null : outputFile;
 
-        System.out.printf("N=%-6d tf=%.2f  seed=%-10s  output=%s%n",
+        // Si el usuario puso --stream pero no --analysis, derivamos el nombre.
+        if (stream && analysisFile == null && out != null) {
+            int dot = out.lastIndexOf('.');
+            analysisFile = (dot > 0 ? out.substring(0, dot) : out) + ".events.txt";
+        }
+
+        System.out.printf("N=%-6d tf=%.2f  seed=%-10s  output=%s  analysis=%s%n",
                           N, tf, (seed == null ? "aleatorio" : seed),
-                          (out == null ? "ninguno" : out));
+                          (out == null ? "ninguno" : out),
+                          (analysisFile == null ? "ninguno" : analysisFile));
 
         Simulator sim = new Simulator(N, tf);
-        SimulationResult result = sim.run(out, seed, writeEvery, snapEvery);
+        SimulationResult result = stream
+                ? sim.runStream(out, analysisFile, seed, writeEvery, radialSnapDt)
+                : sim.run(out, seed, writeEvery, snapEvery);
 
         System.out.printf("Eventos procesados  : %d%n",   result.events);
         System.out.printf("Tiempo de cómputo   : %.4f s%n", result.simTime);
-        System.out.printf("Cfc final           : %.0f%n",
-                          result.cfcHistory.get(result.cfcHistory.size() - 1)[1]);
-        System.out.printf("Fu final            : %.4f%n",
-                          result.fuHistory.get(result.fuHistory.size() - 1)[1]);
+        if (!result.cfcHistory.isEmpty()) {
+            System.out.printf("Cfc final           : %.0f%n",
+                              result.cfcHistory.get(result.cfcHistory.size() - 1)[1]);
+        }
+        if (!result.fuHistory.isEmpty()) {
+            System.out.printf("Fu final            : %.4f%n",
+                              result.fuHistory.get(result.fuHistory.size() - 1)[1]);
+        }
         if (out != null) {
             System.out.printf("Trayectoria en      : %s%n", out);
+        }
+        if (analysisFile != null) {
+            System.out.printf("Analisis en         : %s%n", analysisFile);
         }
 
         boolean ok = true;
@@ -84,8 +106,11 @@ public class SimulationCli {
         System.out.println("  -o    <file>    Archivo de trayectoria        (default: output.txt)");
         System.out.println("  -s    <long>    Semilla aleatoria");
         System.out.println("  -w    <int>     Escribir cada W eventos       (default: 1)");
-        System.out.println("  --snap-every <int>  Snapshot cada K eventos para perfiles radiales");
+        System.out.println("  --snap-every <int>  Snapshot cada K eventos para perfiles radiales (modo legacy)");
         System.out.println("  --no-output     No escribir trayectoria (benchmarks)");
+        System.out.println("  --stream        Modo streaming (no acumula historias en memoria)");
+        System.out.println("  --analysis <f>  Archivo ligero de análisis (requiere --stream)");
+        System.out.println("  --snap-dt <s>   Intervalo de snapshots radiales por TIEMPO (default: 0.5s)");
     }
 }
 

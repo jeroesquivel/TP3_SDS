@@ -52,30 +52,68 @@ public class Simulator {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Ejecuta la simulación y devuelve un SimulationResult.
-     *
-     * @param outputFile   ruta del archivo de trayectoria (null → no escribir)
-     * @param seed         semilla aleatoria (null → no fijar)
-     * @param writeEvery   escribir trayectoria cada W eventos
-     * @param snapshotEvery guardar snapshot para perfiles radiales cada K eventos (≤0 = nunca)
+     * Ejecuta la simulación acumulando observables en memoria.
+     * Útil sólo para N y tf chicos. Para runs grandes usar {@link #runStream}.
      */
     public SimulationResult run(
             String  outputFile,
             Long    seed,
             int     writeEvery,
             int     snapshotEvery) throws IOException {
+        return runInternal(outputFile, seed, writeEvery, snapshotEvery,
+                           null, Double.POSITIVE_INFINITY, /*stream=*/false);
+    }
+
+    /**
+     * Ejecuta la simulación en modo STREAMING: escribe directamente a disco
+     * y no acumula listas de historia en memoria. Recomendado para N ≥ ~300
+     * y/o tf grande.
+     *
+     * @param outputFile       archivo de trayectoria completo (null → no se escribe).
+     *                         Atención: si no es null y writeEvery=1, puede generar
+     *                         archivos muy grandes. Para runs de análisis conviene
+     *                         pasarlo como null y usar solo el analysisFile.
+     * @param analysisFile     archivo ligero de análisis (null → no se escribe).
+     *                         Contiene registros EVT y SNAP que permiten
+     *                         reconstruir Cfc(t), Fu(t) y perfiles radiales.
+     * @param seed             semilla (null → aleatorio)
+     * @param writeEvery       frecuencia (en eventos) de escritura de trayectoria
+     * @param radialSnapDt     intervalo de tiempo (en s) entre snapshots radiales
+     *                         dentro del analysisFile. ≤0 desactiva snapshots.
+     */
+    public SimulationResult runStream(
+            String outputFile,
+            String analysisFile,
+            Long   seed,
+            int    writeEvery,
+            double radialSnapDt) throws IOException {
+        return runInternal(outputFile, seed, writeEvery, /*snapshotEvery=*/0,
+                           analysisFile, radialSnapDt, /*stream=*/true);
+    }
+
+    private SimulationResult runInternal(
+            String  outputFile,
+            Long    seed,
+            int     writeEvery,
+            int     snapshotEvery,
+            String  analysisFile,
+            double  radialSnapDt,
+            boolean stream) throws IOException {
 
         particles = initParticles(seed);
         pq        = new PriorityQueue<>();
         tNow      = 0.0;
         nUsed     = 0;
 
+        // En modo stream las listas quedan vacías (el resultado sigue respetando
+        // la API de SimulationResult, pero la data real vive en los archivos).
         cfcHistory      = new ArrayList<>();
         fuHistory       = new ArrayList<>();
         radialSnapshots = new ArrayList<>();
-
-        cfcHistory.add(new double[]{0.0, 0});
-        fuHistory .add(new double[]{0.0, 0.0});
+        if (!stream) {
+            cfcHistory.add(new double[]{0.0, 0});
+            fuHistory .add(new double[]{0.0, 0.0});
+        }
 
         // ── Cola inicial ──────────────────────────────────────────────────────
         for (int i = 0; i < N; i++) {
@@ -86,11 +124,33 @@ public class Simulator {
             pushWall(i);
         }
 
-        // ── Archivo de trayectoria ────────────────────────────────────────────
+        // ── Archivo de trayectoria completo (animaciones) ─────────────────────
         PrintWriter writer = null;
         if (outputFile != null) {
             writer = new PrintWriter(new BufferedWriter(new FileWriter(outputFile)));
             writeFrame(writer, tNow);
+        }
+
+        // ── Archivo liviano de análisis ───────────────────────────────────────
+        PrintWriter aWriter = null;
+        double nextSnap = Double.POSITIVE_INFINITY;
+        if (analysisFile != null) {
+            aWriter = new PrintWriter(new BufferedWriter(new FileWriter(analysisFile)));
+            aWriter.printf(Locale.US, "# EDMD analysis file%n");
+            aWriter.printf(Locale.US, "# N %d%n", N);
+            aWriter.printf(Locale.US, "# tf %.8f%n", tf);
+            aWriter.printf(Locale.US, "# seed %s%n", seed == null ? "random" : seed);
+            aWriter.printf(Locale.US, "# radialSnapDt %.8f%n", radialSnapDt);
+            aWriter.printf(Locale.US, "# Registros:%n");
+            aWriter.printf(Locale.US, "#   EVT OBS  t pid    (colision con obstaculo, cambia fresca->usada)%n");
+            aWriter.printf(Locale.US, "#   EVT WALL t pid    (colision con borde, cambia usada->fresca)%n");
+            aWriter.printf(Locale.US, "#   SNAP t N_fresh_in%n");
+            aWriter.printf(Locale.US, "#     x y vx vy state   (solo particulas frescas con R.v<0)%n");
+
+            if (radialSnapDt > 0) {
+                writeAnalysisSnap(aWriter, tNow);    // snapshot inicial
+                nextSnap = radialSnapDt;
+            }
         }
 
         int  eventCount = 0;
@@ -104,50 +164,67 @@ public class Simulator {
 
             if (ev.time > tf) break;
 
-            // Invalidación lazy
             if (!ev.isValid(particles)) continue;
 
-            // Vuelo libre: avanzar todas las partículas
+            // Snapshots de análisis periódicos: se emiten ANTES de procesar el
+            // evento, si el tiempo del evento cruza el próximo tick.
+            if (aWriter != null) {
+                while (nextSnap <= ev.time && nextSnap <= tf) {
+                    // Congelar posiciones al instante nextSnap
+                    double dtSnap = nextSnap - tNow;
+                    if (dtSnap > 0) for (Particle p : particles) p.advance(dtSnap);
+                    tNow = nextSnap;
+                    writeAnalysisSnap(aWriter, tNow);
+                    nextSnap += radialSnapDt;
+                }
+            }
+
             double dt = ev.time - tNow;
             if (dt > 0.0) {
                 for (Particle p : particles) p.advance(dt);
             }
             tNow = ev.time;
 
-            // ── Aplicar colisión ──────────────────────────────────────────────
             int[] involved;
-
             switch (ev.type) {
-
                 case Event.PP: {
                     bouncePP(particles[ev.i], particles[ev.j]);
                     involved = new int[]{ev.i, ev.j};
                     break;
                 }
-
                 case Event.OBS: {
                     boolean changed = bounceObs(particles[ev.i]);
                     if (changed) {
                         nUsed++;
                         cfc++;
-                        cfcHistory.add(new double[]{tNow, cfc});
+                        if (stream) {
+                            if (aWriter != null)
+                                aWriter.printf(Locale.US, "EVT OBS %.8f %d%n", tNow, ev.i);
+                        } else {
+                            cfcHistory.add(new double[]{tNow, cfc});
+                        }
                     }
                     involved = new int[]{ev.i};
                     break;
                 }
-
                 default: { // WALL
                     boolean changed = bounceWall(particles[ev.i]);
-                    if (changed) nUsed--;
+                    if (changed) {
+                        nUsed--;
+                        if (stream && aWriter != null)
+                            aWriter.printf(Locale.US, "EVT WALL %.8f %d%n", tNow, ev.i);
+                    }
                     involved = new int[]{ev.i};
                     break;
                 }
             }
 
-            fuHistory.add(new double[]{tNow, (double) nUsed / N});
+            if (!stream) {
+                fuHistory.add(new double[]{tNow, (double) nUsed / N});
+            }
             eventCount++;
 
-            // ── Reprogramar eventos de las partículas involucradas ────────────
+            // Reprogramación
             Set<Long> pairsDone = new HashSet<>();
             for (int idx : involved) {
                 for (int k = 0; k < N; k++) {
@@ -163,13 +240,12 @@ public class Simulator {
                 pushWall(idx);
             }
 
-            // ── Escribir trayectoria ──────────────────────────────────────────
             if (writer != null && eventCount % writeEvery == 0) {
                 writeFrame(writer, tNow);
             }
 
-            // ── Snapshot para perfiles radiales ───────────────────────────────
-            if (snapshotEvery > 0 && eventCount % snapshotEvery == 0) {
+            // Snapshots radiales por CONTADOR DE EVENTOS (sólo modo legacy)
+            if (!stream && snapshotEvery > 0 && eventCount % snapshotEvery == 0) {
                 double[][] snap = new double[N][5];
                 for (int k = 0; k < N; k++) {
                     Particle p = particles[k];
@@ -181,11 +257,46 @@ public class Simulator {
             }
         }
 
+        // Completar snapshots pendientes hasta tf en modo stream
+        if (aWriter != null) {
+            while (nextSnap <= tf) {
+                double dtSnap = nextSnap - tNow;
+                if (dtSnap > 0) for (Particle p : particles) p.advance(dtSnap);
+                tNow = nextSnap;
+                writeAnalysisSnap(aWriter, tNow);
+                nextSnap += radialSnapDt;
+            }
+        }
+
         double simTime = (System.nanoTime() - simStart) / 1e9;
-        if (writer != null) writer.close();
+        if (writer  != null) writer.close();
+        if (aWriter != null) aWriter.close();
 
         return new SimulationResult(
                 particles, cfcHistory, fuHistory, radialSnapshots, simTime, eventCount);
+    }
+
+    /**
+     * Emite un snapshot radial en el archivo de análisis. Se escribe SÓLO
+     * la información necesaria para la sección 1.4: partículas frescas con
+     * velocidad radial hacia el centro (R·v &lt; 0). El resto se omite.
+     */
+    private void writeAnalysisSnap(PrintWriter w, double t) {
+        // Primera pasada: contar
+        int nFreshIn = 0;
+        for (Particle p : particles) {
+            if (p.state != Particle.FRESH) continue;
+            double rdotv = p.x * p.vx + p.y * p.vy;
+            if (rdotv < 0) nFreshIn++;
+        }
+        w.printf(Locale.US, "SNAP %.8f %d%n", t, nFreshIn);
+        for (Particle p : particles) {
+            if (p.state != Particle.FRESH) continue;
+            double rdotv = p.x * p.vx + p.y * p.vy;
+            if (rdotv >= 0) continue;
+            w.printf(Locale.US, "%.6f %.6f %.6f %.6f %d%n",
+                     p.x, p.y, p.vx, p.vy, p.state);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
