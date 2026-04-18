@@ -11,7 +11,7 @@ public class TimingSim {
     }
 
     private static void runTiming() throws Exception {
-        int[]  Nvalues = {10, 20, 50, 100, 200};
+        int[]  Nvalues = {10, 20, 50, 100, 200, 400, 800};
         int    runsT   = 10;
         double tfT     = 5.0;
 

@@ -24,7 +24,7 @@ public class Simulate {
 
         Files.createDirectories(simsDir);
 
-        int[] nValues = {10, 50, 100, 200};
+        int[] nValues = {10, 50, 100, 200, 400, 800};
         double tf = 500.0;
 
         for (int n : nValues) {

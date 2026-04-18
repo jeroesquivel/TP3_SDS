@@ -21,7 +21,7 @@ public class Analyze {
                 });
         }
 
-        int[] nValues = {10, 50, 100, 200};
+        int[] nValues = {10, 50, 100, 200, 400, 800};
         for(int n : nValues) {
             for(int run = 1; run <= 5; run++) {
                 SimulationAnalyzer.analyze("simulations/sim_N_" + n + "_run_" + run + ".txt");
