@@ -1,4 +1,3 @@
-import analysis.Analysis;
 import simulation.SimulationCli;
 import visualization.Visualizer;
 
@@ -56,11 +55,12 @@ public class Main {
         private JButton anRunButton;
         private JButton vizOpenButton;
 
+
         LauncherFrame() {
             super("TP3_SDS — Launcher gráfico");
             setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
             setLayout(new BorderLayout(10, 10));
-
+//            openVisualizer();
             buildTabs();
             JPanel tabsPanel = new JPanel(new BorderLayout());
             tabsPanel.add(tabs, BorderLayout.CENTER);
@@ -96,7 +96,7 @@ public class Main {
 
         private void buildTabs() {
             tabs.addTab("Simulación", buildSimulationPanel());
-            tabs.addTab("Análisis", buildAnalysisPanel());
+//            tabs.addTab("Análisis", buildAnalysisPanel());
             tabs.addTab("Visualización", buildVisualizationPanel());
         }
 
@@ -139,53 +139,53 @@ public class Main {
             return root;
         }
 
-        private JComponent buildAnalysisPanel() {
-            JPanel root = new JPanel(new BorderLayout(10, 10));
-            root.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
-
-            JPanel flags = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            flags.setBorder(new TitledBorder("Selectores"));
-            flags.add(anTiming);
-            flags.add(anCfc);
-            flags.add(anFu);
-            flags.add(anRadial);
-            JButton all = new JButton("--all");
-            all.addActionListener(e -> {
-                anTiming.setSelected(true);
-                anCfc.setSelected(true);
-                anFu.setSelected(true);
-                anRadial.setSelected(true);
-            });
-            flags.add(all);
-
-            JPanel form = new JPanel(new GridBagLayout());
-            form.setBorder(new TitledBorder("Parámetros del análisis"));
-            GridBagConstraints c = baseGbc();
-            int row = 0;
-            addField(form, c, row++, "N", anN);
-            addField(form, c, row++, "tf [s]", anTf);
-            addField(form, c, row++, "runs", anRuns);
-            addField(form, c, row++, "results dir", anResultsDir);
-
-            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
-            JButton presetAll = new JButton("Perfil análisis completo");
-            presetAll.addActionListener(e -> applyAnalysisProfile(true, true, true, true, 100, 1000.0, 5, DEFAULT_RESULTS_DIR));
-            JButton presetTiming = new JButton("Timing");
-            presetTiming.addActionListener(e -> applyAnalysisProfile(true, false, false, false, 100, 5.0, 3, DEFAULT_RESULTS_DIR));
-            JButton presetStationary = new JButton("Estacionario");
-            presetStationary.addActionListener(e -> applyAnalysisProfile(false, true, true, true, 100, 1000.0, 5, DEFAULT_RESULTS_DIR));
-            anRunButton = new JButton("Correr análisis");
-            anRunButton.addActionListener(e -> runAnalysis());
-            actions.add(presetAll);
-            actions.add(presetTiming);
-            actions.add(presetStationary);
-            actions.add(anRunButton);
-
-            root.add(flags, BorderLayout.NORTH);
-            root.add(form, BorderLayout.CENTER);
-            root.add(actions, BorderLayout.SOUTH);
-            return root;
-        }
+//        private JComponent buildAnalysisPanel() {
+//            JPanel root = new JPanel(new BorderLayout(10, 10));
+//            root.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+//
+//            JPanel flags = new JPanel(new FlowLayout(FlowLayout.LEFT));
+//            flags.setBorder(new TitledBorder("Selectores"));
+//            flags.add(anTiming);
+//            flags.add(anCfc);
+//            flags.add(anFu);
+//            flags.add(anRadial);
+//            JButton all = new JButton("--all");
+//            all.addActionListener(e -> {
+//                anTiming.setSelected(true);
+//                anCfc.setSelected(true);
+//                anFu.setSelected(true);
+//                anRadial.setSelected(true);
+//            });
+//            flags.add(all);
+//
+//            JPanel form = new JPanel(new GridBagLayout());
+//            form.setBorder(new TitledBorder("Parámetros del análisis"));
+//            GridBagConstraints c = baseGbc();
+//            int row = 0;
+//            addField(form, c, row++, "N", anN);
+//            addField(form, c, row++, "tf [s]", anTf);
+//            addField(form, c, row++, "runs", anRuns);
+//            addField(form, c, row++, "results dir", anResultsDir);
+//
+//            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+//            JButton presetAll = new JButton("Perfil análisis completo");
+//            presetAll.addActionListener(e -> applyAnalysisProfile(true, true, true, true, 100, 1000.0, 5, DEFAULT_RESULTS_DIR));
+//            JButton presetTiming = new JButton("Timing");
+//            presetTiming.addActionListener(e -> applyAnalysisProfile(true, false, false, false, 100, 5.0, 3, DEFAULT_RESULTS_DIR));
+//            JButton presetStationary = new JButton("Estacionario");
+//            presetStationary.addActionListener(e -> applyAnalysisProfile(false, true, true, true, 100, 1000.0, 5, DEFAULT_RESULTS_DIR));
+//            anRunButton = new JButton("Correr análisis");
+//            anRunButton.addActionListener(e -> runAnalysis());
+//            actions.add(presetAll);
+//            actions.add(presetTiming);
+//            actions.add(presetStationary);
+//            actions.add(anRunButton);
+//
+//            root.add(flags, BorderLayout.NORTH);
+//            root.add(form, BorderLayout.CENTER);
+//            root.add(actions, BorderLayout.SOUTH);
+//            return root;
+//        }
 
         private JComponent buildVisualizationPanel() {
             JPanel root = new JPanel(new BorderLayout(10, 10));
@@ -313,30 +313,30 @@ public class Main {
             }, simRunButton);
         }
 
-        private void runAnalysis() {
-            final List<String> args = new ArrayList<>();
-            try {
-                if (anTiming.isSelected()) args.add("--timing");
-                if (anCfc.isSelected()) args.add("--cfc");
-                if (anFu.isSelected()) args.add("--fu");
-                if (anRadial.isSelected()) args.add("--radial");
-                if (!anTiming.isSelected() && !anCfc.isSelected() && !anFu.isSelected() && !anRadial.isSelected()) {
-                    args.add("--all");
-                }
-                args.add("-N"); args.add(Integer.toString(Integer.parseInt(anN.getText().trim())));
-                args.add("-tf"); args.add(Double.toString(Double.parseDouble(anTf.getText().trim())));
-                args.add("--runs"); args.add(Integer.toString(Integer.parseInt(anRuns.getText().trim())));
-                args.add("--results-dir"); args.add(anResultsDir.getText().trim());
-            } catch (NumberFormatException ex) {
-                log("Error: revisá los valores numéricos del análisis.");
-                return;
-            }
-
-            runBackground("Análisis", () -> Analysis.main(args.toArray(new String[0])), null, anRunButton);
-        }
+//        private void runAnalysis() {
+//            final List<String> args = new ArrayList<>();
+//            try {
+//                if (anTiming.isSelected()) args.add("--timing");
+//                if (anCfc.isSelected()) args.add("--cfc");
+//                if (anFu.isSelected()) args.add("--fu");
+//                if (anRadial.isSelected()) args.add("--radial");
+//                if (!anTiming.isSelected() && !anCfc.isSelected() && !anFu.isSelected() && !anRadial.isSelected()) {
+//                    args.add("--all");
+//                }
+//                args.add("-N"); args.add(Integer.toString(Integer.parseInt(anN.getText().trim())));
+//                args.add("-tf"); args.add(Double.toString(Double.parseDouble(anTf.getText().trim())));
+//                args.add("--runs"); args.add(Integer.toString(Integer.parseInt(anRuns.getText().trim())));
+//                args.add("--results-dir"); args.add(anResultsDir.getText().trim());
+//            } catch (NumberFormatException ex) {
+//                log("Error: revisá los valores numéricos del análisis.");
+//                return;
+//            }
+//
+//            runBackground("Análisis", () -> Analysis.main(args.toArray(new String[0])), null, anRunButton);
+//        }
 
         private void openVisualizer() {
-            final String file = "simulations/sim_N_50_run_3.txt"; //vizFile.getText().trim();
+            final String file = "simulations/sim_N_100_run_4.txt"; //vizFile.getText().trim();
             final int interval;
             final int maxFrames;
             try {
