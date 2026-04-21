@@ -4,6 +4,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class Analyze {
     public static void main(String[] args) throws IOException {
@@ -21,11 +23,32 @@ public class Analyze {
                 });
         }
 
-        int[] nValues = {10, 50, 100, 200, 400, 800};
-        for(int n : nValues) {
-            for(int run = 1; run <= 5; run++) {
-                SimulationAnalyzer.analyze("simulations/sim_N_" + n + "_run_" + run + ".txt");
-            }
+//        int[] nValues = {10, 50, 100, 200, 400, 800};
+//        for(int n : nValues) {
+//            for(int run = 1; run <= 5; run++) {
+//                SimulationAnalyzer.analyze("simulations/sim_N_" + n + "_run_" + run + ".txt");
+//            }
+//        }
+
+        Path simulationsDir = Paths.get("simulations");
+        if (!Files.exists(simulationsDir)) {
+            System.err.println("No se encontró la carpeta simulations.");
+            return;
+        }
+
+        List<Path> files = Files.list(simulationsDir)
+                .filter(p -> p.toString().endsWith(".txt"))
+                .sorted()
+                .collect(Collectors.toList());
+
+        if (files.isEmpty()) {
+            System.out.println("No se encontraron archivos en simulations/");
+            return;
+        }
+
+        for (Path file : files) {
+            System.out.println("Analizando: " + file.getFileName());
+            SimulationAnalyzer.analyze(file.toString());
         }
     }
 }

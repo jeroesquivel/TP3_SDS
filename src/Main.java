@@ -127,7 +127,7 @@ public class Main {
 
             JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
             simRunButton = new JButton("Correr simulación");
-            simRunButton.addActionListener(e -> runSimulation());
+//            simRunButton.addActionListener(e -> runSimulation());
             JButton vizButton = new JButton("Abrir visualización");
             vizButton.addActionListener(e -> openVisualizer());
             actions.add(simRunButton);
@@ -274,44 +274,44 @@ public class Main {
             log("Perfil de simulación aplicado: N=" + N + ", tf=" + tf + ", output=" + output);
         }
 
-        private void applyAnalysisProfile(boolean timing, boolean cfc, boolean fu, boolean radial,
-                                          int N, double tf, int runs, String dir) {
-            anTiming.setSelected(timing);
-            anCfc.setSelected(cfc);
-            anFu.setSelected(fu);
-            anRadial.setSelected(radial);
-            anN.setText(String.valueOf(N));
-            anTf.setText(String.valueOf(tf));
-            anRuns.setText(String.valueOf(runs));
-            anResultsDir.setText(dir);
-            log("Perfil de análisis aplicado.");
-        }
+//        private void applyAnalysisProfile(boolean timing, boolean cfc, boolean fu, boolean radial,
+//                                          int N, double tf, int runs, String dir) {
+//            anTiming.setSelected(timing);
+//            anCfc.setSelected(cfc);
+//            anFu.setSelected(fu);
+//            anRadial.setSelected(radial);
+//            anN.setText(String.valueOf(N));
+//            anTf.setText(String.valueOf(tf));
+//            anRuns.setText(String.valueOf(runs));
+//            anResultsDir.setText(dir);
+//            log("Perfil de análisis aplicado.");
+//        }
 
-        private void runSimulation() {
-            final List<String> args = new ArrayList<>();
-            try {
-                args.add("-N"); args.add(Integer.toString(Integer.parseInt(simN.getText().trim())));
-                args.add("-tf"); args.add(Double.toString(Double.parseDouble(simTf.getText().trim())));
-                args.add("-o"); args.add(simOut.getText().trim());
-                String seedText = simSeed.getText().trim();
-                if (!seedText.isEmpty()) {
-                    args.add("-s"); args.add(Long.toString(Long.parseLong(seedText)));
-                }
-                args.add("-w"); args.add(Integer.toString(Integer.parseInt(simWriteEvery.getText().trim())));
-                args.add("--snap-every"); args.add(Integer.toString(Integer.parseInt(simSnapEvery.getText().trim())));
-                if (simNoOutput.isSelected()) args.add("--no-output");
-            } catch (NumberFormatException ex) {
-                log("Error: revisá los valores numéricos de la simulación.");
-                return;
-            }
-
-            final String outputFile = simNoOutput.isSelected() ? null : simOut.getText().trim();
-            runBackground("Simulación", () -> SimulationCli.main(args.toArray(new String[0])), () -> {
-                if (outputFile != null && !outputFile.isEmpty()) {
-                    vizFile.setText(outputFile);
-                }
-            }, simRunButton);
-        }
+//        private void runSimulation() {
+//            final List<String> args = new ArrayList<>();
+//            try {
+//                args.add("-N"); args.add(Integer.toString(Integer.parseInt(simN.getText().trim())));
+//                args.add("-tf"); args.add(Double.toString(Double.parseDouble(simTf.getText().trim())));
+//                args.add("-o"); args.add(simOut.getText().trim());
+//                String seedText = simSeed.getText().trim();
+//                if (!seedText.isEmpty()) {
+//                    args.add("-s"); args.add(Long.toString(Long.parseLong(seedText)));
+//                }
+//                args.add("-w"); args.add(Integer.toString(Integer.parseInt(simWriteEvery.getText().trim())));
+//                args.add("--snap-every"); args.add(Integer.toString(Integer.parseInt(simSnapEvery.getText().trim())));
+//                if (simNoOutput.isSelected()) args.add("--no-output");
+//            } catch (NumberFormatException ex) {
+//                log("Error: revisá los valores numéricos de la simulación.");
+//                return;
+//            }
+//
+//            final String outputFile = simNoOutput.isSelected() ? null : simOut.getText().trim();
+//            runBackground("Simulación", () -> SimulationCli.main(args.toArray(new String[0])), () -> {
+//                if (outputFile != null && !outputFile.isEmpty()) {
+//                    vizFile.setText(outputFile);
+//                }
+//            }, simRunButton);
+//        }
 
 //        private void runAnalysis() {
 //            final List<String> args = new ArrayList<>();
@@ -336,7 +336,7 @@ public class Main {
 //        }
 
         private void openVisualizer() {
-            final String file = "simulations/sim_N_100_run_4.txt"; //vizFile.getText().trim();
+            final String file = "simulations/sim_N_800_run_1_light.txt"; //vizFile.getText().trim();
             final int interval;
             final int maxFrames;
             try {

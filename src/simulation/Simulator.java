@@ -91,6 +91,40 @@ public class Simulator {
                            analysisFile, radialSnapDt, /*stream=*/true);
     }
 
+    /**
+     * Ejecuta la simulación en modo LIGERO: registra el estado del sistema
+     * en el archivo de salida sólo cada 1000 eventos, reduciendo drásticamente
+     * el tamaño del archivo. El nombre de salida se deriva del parámetro
+     * {@code outputFile} insertando "light" antes de la extensión
+     * (o al final si no hay extensión). Recomendado para simulaciones pesadas
+     * donde no se necesita resolución temporal máxima.
+     *
+     * @param outputFile   ruta base del archivo (p.ej. "out/run.txt")
+     *                     → se escribirá como "out/run_light.txt"
+     * @param seed         semilla (null → aleatorio)
+     * @param snapshotEvery intervalo (en eventos) para snapshots radiales en memoria;
+     *                     0 desactiva los snapshots
+     */
+    public SimulationResult runLight(
+            String outputFile,
+            Long   seed,
+            int    snapshotEvery) throws IOException {
+
+        // Derivar nombre con "light" antes de la extensión
+        String lightFile = null;
+        if (outputFile != null) {
+            int dot = outputFile.lastIndexOf('.');
+            if (dot >= 0) {
+                lightFile = outputFile.substring(0, dot) + "_light" + outputFile.substring(dot);
+            } else {
+                lightFile = outputFile + "_light";
+            }
+        }
+
+        return runInternal(lightFile, seed, /*writeEvery=*/1000, snapshotEvery,
+                /*analysisFile=*/null, Double.POSITIVE_INFINITY, /*stream=*/false);
+    }
+
     private SimulationResult runInternal(
             String  outputFile,
             Long    seed,
