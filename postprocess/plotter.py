@@ -91,11 +91,14 @@ class Plotter:
     _COLOR_RHO = "#3498db"
     _COLOR_V = "#f39c12"
 
-    # Regex para los nombres de archivo
-    _SIM_RE = re.compile(r"sim_N_(\d+)_run_(\d+)\.txt$")
-    _CFC_RE = re.compile(r"cfc_sim_N_(\d+)_run_(\d+)\.txt$")
-    _FU_RE = re.compile(r"fu_sim_N_(\d+)_run_(\d+)\.txt$")
+    # Regex para los nombres de archivo (versión normal y versión light)
+    _SIM_RE    = re.compile(r"sim_N_(\d+)_run_(\d+)(_light)?\.txt$")
+    _CFC_RE    = re.compile(r"cfc_sim_N_(\d+)_run_(\d+)\.txt$")
+    _CFC_LIGHT_RE = re.compile(r"cfc_sim_N_(\d+)_run_(\d+)_light\.txt$")
+    _FU_RE     = re.compile(r"fu_sim_N_(\d+)_run_(\d+)\.txt$")
+    _FU_LIGHT_RE  = re.compile(r"fu_sim_N_(\d+)_run_(\d+)_light\.txt$")
     _RADIAL_RE = re.compile(r"radial_sim_N_(\d+)_run_(\d+)\.txt$")
+    _RADIAL_LIGHT_RE = re.compile(r"radial_sim_N_(\d+)_run_(\d+)_light\.txt$")
     # Archivo ligero producido por Simulator.runStream  (events_N_<N>_run_<r>.txt)
     _EVENTS_RE = re.compile(r"events_N_(\d+)_run_(\d+)\.txt$")
 
@@ -676,130 +679,153 @@ class Plotter:
         return any(self.results_dir.glob("events_N_*_run_*.txt"))
 
     def _load_cfc_per_N(self) -> Dict[int, List[Tuple[np.ndarray, np.ndarray]]]:
-        """Lee cfc_sim_N_*_run_*.txt o events_*.txt → {N: [(t, cfc), ...]}."""
+        """
+        Lee cfc_sim_N_*_run_*.txt, cfc_sim_N_*_run_*_light.txt y events_*.txt
+        → {N: [(t, cfc), ...]}. Las tres fuentes se combinan si coexisten.
+        """
         out: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = {}
-        if self._has_events_files():
-            for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
-                m = self._EVENTS_RE.search(p.name)
-                if not m:
-                    continue
-                N = int(m.group(1))
-                ev = self._load_events_file(p)
-                # Cfc(t) es el conteo acumulado de eventos OBS.
-                t_obs = ev["t_obs"]
-                t = np.concatenate([[0.0], t_obs, [ev["tf"]]])
-                cfc = np.concatenate([[0], np.arange(1, len(t_obs) + 1), [len(t_obs)]])
-                out.setdefault(N, []).append((t, cfc.astype(float)))
-            return out
-        for p in sorted(self.results_dir.glob("cfc_sim_N_*_run_*.txt")):
-            m = self._CFC_RE.search(p.name)
+
+        # Fuente 1: archivos events_* (runStream)
+        for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
+            m = self._EVENTS_RE.search(p.name)
             if not m:
                 continue
             N = int(m.group(1))
-            data = self._read_tab_table(p)
-            if data.size == 0:
-                continue
-            t = data[:, 0]
-            cfc = data[:, 1]
-            out.setdefault(N, []).append((t, cfc))
+            ev = self._load_events_file(p)
+            t_obs = ev["t_obs"]
+            t = np.concatenate([[0.0], t_obs, [ev["tf"]]])
+            cfc = np.concatenate([[0], np.arange(1, len(t_obs) + 1), [len(t_obs)]])
+            out.setdefault(N, []).append((t, cfc.astype(float)))
+
+        # Fuente 2: archivos cfc_* normales y _light
+        for pattern, regex in [
+            ("cfc_sim_N_*_run_*.txt",       self._CFC_RE),
+            ("cfc_sim_N_*_run_*_light.txt", self._CFC_LIGHT_RE),
+        ]:
+            for p in sorted(self.results_dir.glob(pattern)):
+                m = regex.search(p.name)
+                if not m:
+                    continue
+                N = int(m.group(1))
+                data = self._read_tab_table(p)
+                if data.size == 0:
+                    continue
+                t = data[:, 0]
+                cfc = data[:, 1]
+                out.setdefault(N, []).append((t, cfc))
+
         return out
 
     def _load_fu_per_N(self) -> Dict[int, List[Tuple[np.ndarray, np.ndarray]]]:
-        """Lee fu_sim_N_*_run_*.txt o events_*.txt → {N: [(t, fu), ...]}."""
+        """
+        Lee fu_sim_N_*_run_*.txt, fu_sim_N_*_run_*_light.txt y events_*.txt
+        → {N: [(t, fu), ...]}. Las tres fuentes se combinan si coexisten.
+        """
         out: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = {}
-        if self._has_events_files():
-            for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
-                m = self._EVENTS_RE.search(p.name)
-                if not m:
-                    continue
-                N = int(m.group(1))
-                ev = self._load_events_file(p)
-                # Mezclar eventos OBS (+1) y WALL (-1) ordenados por tiempo
-                events = [(t, +1) for t in ev["t_obs"]] + [(t, -1) for t in ev["t_wall"]]
-                events.sort(key=lambda x: x[0])
-                ts, nu = [0.0], [0]
-                cur = 0
-                for t, d in events:
-                    cur += d
-                    ts.append(t); nu.append(cur)
-                ts.append(ev["tf"]); nu.append(cur)
-                fu = np.array(nu, dtype=float) / max(1, N)
-                out.setdefault(N, []).append((np.array(ts), fu))
-            return out
-        for p in sorted(self.results_dir.glob("fu_sim_N_*_run_*.txt")):
-            m = self._FU_RE.search(p.name)
+
+        # Fuente 1: archivos events_* (runStream)
+        for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
+            m = self._EVENTS_RE.search(p.name)
             if not m:
                 continue
             N = int(m.group(1))
-            data = self._read_tab_table(p)
-            if data.size == 0:
-                continue
-            t = data[:, 0]
-            fu = data[:, 2]
-            out.setdefault(N, []).append((t, fu))
+            ev = self._load_events_file(p)
+            events = [(t, +1) for t in ev["t_obs"]] + [(t, -1) for t in ev["t_wall"]]
+            events.sort(key=lambda x: x[0])
+            ts, nu = [0.0], [0]
+            cur = 0
+            for t, d in events:
+                cur += d
+                ts.append(t); nu.append(cur)
+            ts.append(ev["tf"]); nu.append(cur)
+            fu = np.array(nu, dtype=float) / max(1, N)
+            out.setdefault(N, []).append((np.array(ts), fu))
+
+        # Fuente 2: archivos fu_* normales y _light
+        for pattern, regex in [
+            ("fu_sim_N_*_run_*.txt",       self._FU_RE),
+            ("fu_sim_N_*_run_*_light.txt", self._FU_LIGHT_RE),
+        ]:
+            for p in sorted(self.results_dir.glob(pattern)):
+                m = regex.search(p.name)
+                if not m:
+                    continue
+                N = int(m.group(1))
+                data = self._read_tab_table(p)
+                if data.size == 0:
+                    continue
+                t = data[:, 0]
+                fu = data[:, 2]
+                out.setdefault(N, []).append((t, fu))
+
         return out
 
     def _load_radial_per_N(self) -> Dict[int, List[List[Dict[int, Tuple[int, float]]]]]:
         """
-        Lee radial_sim_N_*_run_*.txt o events_*.txt
-          → {N: [realization_1_snaps, realization_2_snaps, ...]}.
-
-        Cada realización es una lista de snapshots, y cada snapshot es un
-        dict {shell_idx: (count, sumV_inward_signed)}.
+        Lee radial_sim_N_*_run_*.txt, radial_sim_N_*_run_*_light.txt y events_*.txt
+        → {N: [realization_1_snaps, realization_2_snaps, ...]}.
+        Las tres fuentes se combinan si coexisten.
         """
         out: Dict[int, List[List[Dict[int, Tuple[int, float]]]]] = {}
-        if self._has_events_files():
-            for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
-                m = self._EVENTS_RE.search(p.name)
-                if not m:
-                    continue
-                N = int(m.group(1))
-                ev = self._load_events_file(p)
-                snapshots = [snap_dict for (_t, snap_dict) in ev["snaps"]]
-                out.setdefault(N, []).append(snapshots)
-            return out
-        for p in sorted(self.results_dir.glob("radial_sim_N_*_run_*.txt")):
-            m = self._RADIAL_RE.search(p.name)
+
+        # Fuente 1: archivos events_* (runStream)
+        for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
+            m = self._EVENTS_RE.search(p.name)
             if not m:
                 continue
             N = int(m.group(1))
-            snapshots: List[Dict[int, Tuple[int, float]]] = []
-            current: Dict[int, Tuple[int, float]] = {}
-            in_block = False
-
-            with open(p, "r") as f:
-                for line in f:
-                    line = line.rstrip()
-                    if line.startswith("# STEP"):
-                        if in_block:
-                            snapshots.append(current)
-                        current = {}
-                        in_block = True
-                        continue
-                    if not line:
-                        if in_block:
-                            snapshots.append(current)
-                            current = {}
-                            in_block = False
-                        continue
-                    if line.startswith("#"):
-                        continue
-
-                    tok = line.replace(",", ".").split()
-                    if len(tok) < 5:
-                        continue
-                    try:
-                        S_center = float(tok[0])
-                        count = int(tok[1])
-                        v_fin = float(tok[3])
-                    except ValueError:
-                        continue
-                    idx = int(round((S_center - self.SIGMA_OBS - self.dS / 2) / self.dS))
-                    current[idx] = (count, count * v_fin)
-                if in_block:
-                    snapshots.append(current)
-
+            ev = self._load_events_file(p)
+            snapshots = [snap_dict for (_t, snap_dict) in ev["snaps"]]
             out.setdefault(N, []).append(snapshots)
+
+        # Fuente 2: archivos radial_* normales y _light
+        for pattern, regex in [
+            ("radial_sim_N_*_run_*.txt",       self._RADIAL_RE),
+            ("radial_sim_N_*_run_*_light.txt", self._RADIAL_LIGHT_RE),
+        ]:
+            for p in sorted(self.results_dir.glob(pattern)):
+                m = regex.search(p.name)
+                if not m:
+                    continue
+                N = int(m.group(1))
+                snapshots: List[Dict[int, Tuple[int, float]]] = []
+                current: Dict[int, Tuple[int, float]] = {}
+                in_block = False
+
+                with open(p, "r") as f:
+                    for line in f:
+                        line = line.rstrip()
+                        if line.startswith("# STEP"):
+                            if in_block:
+                                snapshots.append(current)
+                            current = {}
+                            in_block = True
+                            continue
+                        if not line:
+                            if in_block:
+                                snapshots.append(current)
+                                current = {}
+                                in_block = False
+                            continue
+                        if line.startswith("#"):
+                            continue
+
+                        tok = line.replace(",", ".").split()
+                        if len(tok) < 5:
+                            continue
+                        try:
+                            S_center = float(tok[0])
+                            count = int(tok[1])
+                            v_fin = float(tok[3])
+                        except ValueError:
+                            continue
+                        idx = int(round((S_center - self.SIGMA_OBS - self.dS / 2) / self.dS))
+                        current[idx] = (count, count * v_fin)
+                    if in_block:
+                        snapshots.append(current)
+
+                out.setdefault(N, []).append(snapshots)
+
         return out
 
     # ─────────────────────────────────────────────────────────────────────
