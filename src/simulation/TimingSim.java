@@ -13,13 +13,13 @@ public class TimingSim {
     private static void runTiming() throws Exception {
         int[]  Nvalues = {10, 20, 50, 100, 200, 400, 800};
         int    runsT   = 10;
-        double tfT     = 5.0;
+        double tfT     = 500.0;
 
         System.out.println("\n═══ A) Tiempo de ejecución vs N ═══");
 
 
 
-        String csvPath = "results/timing.csv";
+        String csvPath = "timing.csv";
         try (PrintWriter w = new PrintWriter(csvPath)) {
             w.println("N,avg_time_s,std_time_s,avg_events");
 
@@ -29,7 +29,7 @@ public class TimingSim {
 
                 for (int r = 0; r < runsT; r++) {
                     Simulator        sim    = new Simulator(N, tfT);
-                    SimulationResult result = sim.run(null, (long)(42 + r), 1, 0);
+                    SimulationResult result = sim.runStream(null, null, (long)(42 + r), 1, -1);
                     times[r]  = result.simTime;
                     events[r] = result.events;
                     System.out.printf("  N=%-4d run=%d  t=%.6fs  eventos=%d%n",
