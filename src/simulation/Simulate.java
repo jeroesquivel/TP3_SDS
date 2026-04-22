@@ -28,7 +28,7 @@ public class Simulate {
         double tf = 1500.0;
 
         for (int n : nValues) {
-            for (int run = 1; run <= 1; run++) {
+            for (int run = 1; run <= 5; run++) {
                 Simulator simulator = new Simulator(n, tf);
                 String outputFile = "simulations/sim_N_" + n + "_run_" + run + ".txt";
                 SimulationResult result;

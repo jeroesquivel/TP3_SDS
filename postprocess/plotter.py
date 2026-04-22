@@ -270,6 +270,10 @@ class Plotter:
         F_mean, F_std = [], []
         tstat_mean, tstat_std = [], []
 
+        # Grilla común para el gráfico de Fu promediado: se construye una vez
+        # por N interpolando todas las realizaciones sobre ella.
+        fu_avg_per_N: Dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+
         for i, N in enumerate(Ns):
             color = cmap(i / max(1, len(Ns) - 1))
             Fs, ts = [], []
@@ -285,6 +289,24 @@ class Plotter:
             F_std.append(np.std(Fs, ddof=1) if len(Fs) > 1 else 0.0)
             tstat_mean.append(np.mean(ts))
             tstat_std.append(np.std(ts, ddof=1) if len(ts) > 1 else 0.0)
+
+            # Grilla común: desde el máximo t_inicio hasta el mínimo t_fin
+            # de todas las realizaciones, para no extrapolar.
+            runs = fu_by_N[N]
+            t_common = np.linspace(
+                max(r[0][0]  for r in runs),
+                min(r[0][-1] for r in runs),
+                500,
+            )
+            interp_matrix = np.array(
+                [np.interp(t_common, r[0], r[1]) for r in runs]
+            )
+            fu_avg_per_N[N] = (
+                t_common,
+                interp_matrix.mean(axis=0),
+                interp_matrix.std(axis=0, ddof=1) if len(runs) > 1
+                else np.zeros(len(t_common)),
+            )
 
         ax.set_xlabel("t [s]")
         ax.set_ylabel(r"$F_u(t) = N_u(t)/N$")
@@ -323,9 +345,29 @@ class Plotter:
         tstat_path = self.out_dir / "1_3_tEstacionario_vs_N.png"
         fig.savefig(tstat_path, dpi=150)
         plt.close(fig)
-        print(f"[1.3] → {tstat_path}")
+        print(f"[1.3] -> {tstat_path}")
 
-        return fu_path, fest_path, tstat_path
+        # Grafico adicional: Fu(t) promediado entre realizaciones, una curva por N
+        fig, ax = plt.subplots(figsize=(8, 5))
+        for i, N in enumerate(Ns):
+            color = cmap(i / max(1, len(Ns) - 1))
+            t_c, fu_avg, fu_std = fu_avg_per_N[N]
+            ax.plot(t_c, fu_avg, color=color, linewidth=2.0, label=f"N={N}")
+            ax.fill_between(t_c, fu_avg - fu_std, fu_avg + fu_std,
+                            color=color, alpha=0.2)
+        ax.set_xlabel("t [s]")
+        ax.set_ylabel(r"$\langle F_u \rangle (t)$")
+        ax.set_title(r"1.3 --- $\langle F_u \rangle$ promediado entre realizaciones")
+        ax.set_ylim(0.0, y_max)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fu_avg_path = self.out_dir / "1_3_Fu_promedio_vs_t.png"
+        fig.savefig(fu_avg_path, dpi=150)
+        plt.close(fig)
+        print(f"[1.3] -> {fu_avg_path}")
+
+        return fu_path, fest_path, tstat_path, fu_avg_path
 
     # ── 1.4 ── Perfiles radiales ρ(S), |v(S)|, Jin(S) ─────────────────────
 

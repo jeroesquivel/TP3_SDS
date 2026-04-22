@@ -6,3 +6,4 @@ results/
 *.txt
 *.md
 *.json
+.compare/
