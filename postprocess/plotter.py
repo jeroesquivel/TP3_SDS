@@ -117,7 +117,6 @@ class Plotter:
             source = "lectura de trayectorias"
 
         ax.set_xlabel("N (número de partículas)")
-        ax.set_title(f"1.1 — Tiempo de ejecución en función de N  [{source}]")
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
@@ -138,7 +137,6 @@ class Plotter:
         )
         ax2.set_xlabel("N (número de partículas)")
         ax2.set_ylabel(r"$\log(\langle T \rangle)$  [log(s)]")
-        ax2.set_title("1.1 — log(Tiempo de ejecución) en función de N")
         ax2.grid(True, alpha=0.3)
         ax2.legend()
         fig2.tight_layout()
@@ -166,7 +164,6 @@ class Plotter:
                      label=fr"Ajuste: $\alpha = {alpha:.2f}$")
         ax3.set_xlabel(r"$\log(N)$")
         ax3.set_ylabel(r"$\log(\langle T \rangle)$  [log(s)]")
-        ax3.set_title("1.1 — log(Tiempo de ejecución) vs log(N)")
         ax3.grid(True, alpha=0.3)
         ax3.legend()
         fig3.tight_layout()
@@ -202,7 +199,6 @@ class Plotter:
 
         ax.set_xlabel("t [s]")
         ax.set_ylabel(r"$C_{fc}(t)$  [colisiones acumuladas]")
-        ax.set_title("1.2 — Conteo acumulado de partículas frescas → usadas")
         ax.set_xlim(0, t_max_global)
         ax.grid(True, alpha=0.3)
         ax.legend()
@@ -217,7 +213,6 @@ class Plotter:
                     color=self._COLOR_J, markersize=7)
         ax.set_xlabel("N")
         ax.set_ylabel(r"$\langle J \rangle$  [colisiones/s]")
-        ax.set_title(r"1.2 — Scanning rate $\langle J \rangle$ en función de N")
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         j_path = self.out_dir / "1_2_J_vs_N.png"
@@ -232,7 +227,7 @@ class Plotter:
         # Completar con {N: t_onset} para cada N que se quiera fijar manualmente.
         # Para los N ausentes se usa el modo automático (último tail_fraction).
         # Ejemplo: T_ONSET_MANUAL = {50: 200.0, 100: 350.0, 200: 500.0}
-        T_ONSET_MANUAL = {10:0.0, 50:100.0, 100:200.0, 200:300.0, 400:800.0, 800:2000.0}  
+        T_ONSET_MANUAL = {10:0.0, 50:100.0, 100:200.0, 200:300.0, 400:800.0, 800:2000.0}
         # ─────────────────────────────────────────────────────────────────────
 
         fu_by_N = self._load_fu_per_N()
@@ -288,7 +283,6 @@ class Plotter:
 
         ax.set_xlabel("t [s]")
         ax.set_ylabel(r"$F_u(t) = N_u(t)/N$")
-        ax.set_title("1.3 — Fracción de partículas usadas en el tiempo")
         ax.set_xlim(0, t_max_global)
         ax.set_ylim(0.0, 0.35)
         ax.grid(True, alpha=0.3)
@@ -304,7 +298,6 @@ class Plotter:
                     color=self._COLOR_USED, markersize=7)
         ax.set_xlabel("N")
         ax.set_ylabel(r"$F_{est}$")
-        ax.set_title("1.3 — Valor estacionario de $F_u$ en función de N")
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fest_path = self.out_dir / "1_3_Fest_vs_N.png"
@@ -317,8 +310,6 @@ class Plotter:
                     color=self._COLOR_FRESH, markersize=7)
         ax.set_xlabel("N")
         ax.set_ylabel(r"$t_{estacionario}$ [s]")
-        ax.set_title(f"1.3 — Tiempo al estacionario "
-                     f"(cuando $F_u \\geq {threshold}\\,F_{{est}}$)")
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         tstat_path = self.out_dir / "1_3_tEstacionario_vs_N.png"
@@ -335,7 +326,6 @@ class Plotter:
                             color=color, alpha=0.2)
         ax.set_xlabel("t [s]")
         ax.set_ylabel(r"$\langle F_u \rangle (t)$")
-        ax.set_title(r"1.3 --- $\langle F_u \rangle$ promediado entre realizaciones")
         ax.set_xlim(0, t_max_global)
         ax.set_ylim(0.0, 0.3)
         ax.grid(True, alpha=0.3)
@@ -443,7 +433,6 @@ class Plotter:
         for ax, title, ylab in zip(axes, titles, ylabels):
             ax.set_xlabel("S [m]")
             ax.set_ylabel(ylab)
-            ax.set_title(title)
             ax.grid(True, alpha=0.3)
             ax.legend(fontsize=8)
 
@@ -456,17 +445,14 @@ class Plotter:
         fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
         axes[0].errorbar(Ns, rho_at_target_mean, yerr=rho_at_target_std,
                          fmt="o-", capsize=4, color=self._COLOR_RHO)
-        axes[0].set_title(fr"$\langle \rho^{{in}}_f \rangle$ en S$\approx${S_target} m")
         axes[0].set_ylabel(r"$\rho^{in}_f$ [1/m$^2$]")
 
         axes[1].errorbar(Ns, v_at_target_mean, yerr=v_at_target_std,
                          fmt="s-", capsize=4, color=self._COLOR_V)
-        axes[1].set_title(fr"$|\langle v^{{in}}_f \rangle|$ en S$\approx${S_target} m")
         axes[1].set_ylabel(r"$|v^{in}_f|$ [m/s]")
 
         axes[2].errorbar(Ns, J_at_target_mean, yerr=J_at_target_std,
                          fmt="^-", capsize=4, color=self._COLOR_J)
-        axes[2].set_title(fr"$J_{{in}}$ en S$\approx${S_target} m")
         axes[2].set_ylabel(r"$J_{in}$ [1/(m$^2$·s)]")
 
         for ax in axes:
