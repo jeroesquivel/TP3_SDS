@@ -232,7 +232,7 @@ class Plotter:
         # Completar con {N: t_onset} para cada N que se quiera fijar manualmente.
         # Para los N ausentes se usa el modo automático (último tail_fraction).
         # Ejemplo: T_ONSET_MANUAL = {50: 200.0, 100: 350.0, 200: 500.0}
-        T_ONSET_MANUAL = {}   # <-- EDITAR AQUI
+        T_ONSET_MANUAL = {10:0.0, 50:100.0, 100:200.0, 200:300.0, 400:800.0, 800:2000.0}  
         # ─────────────────────────────────────────────────────────────────────
 
         fu_by_N = self._load_fu_per_N()
