@@ -1,26 +1,5 @@
 """
 Plotter para los resultados del TP3 - Sistema 1 (Scanning rate en recinto circular).
-
-Lee los archivos .txt generados por el motor de simulación (simulations/sim_N_*_run_*.txt)
-y/o los archivos de observables creados por SimulationAnalyzer
-(results/cfc_*.txt, results/fu_*.txt, results/radial_*.txt) y produce
-las figuras pedidas en los puntos 1.1 a 1.4 del enunciado.
-
-Uso típico:
-    from plotter import Plotter
-
-    p = Plotter(sim_dir="simulations", results_dir="results", out_dir="figures")
-    p.plot_all()                           # corre todo
-    # o, selectivamente:
-    p.plot_execution_time()                # 1.1
-    p.plot_cfc_and_J(regression_window=(1.0, None))   # 1.2
-    p.plot_fu()                            # 1.3
-    p.plot_radial_profiles()               # 1.4
-
-Desde línea de comandos:
-    python plotter.py --sim-dir simulations --results-dir results --out figures --all
-
-Requiere: numpy, matplotlib.
 """
 
 from __future__ import annotations
@@ -34,30 +13,22 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib
-# Backend no interactivo: evita que el script se cuelgue en un event loop
-# de GUI (MacOSX / Qt) después de guardar la última figura.
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Estructuras de datos
-# ─────────────────────────────────────────────────────────────────────────────
-
 @dataclass
 class TimeStep:
-    """Un snapshot (t) con posiciones/velocidades/estados de las N partículas."""
     t: float
-    x: np.ndarray   # shape (N,)
+    x: np.ndarray
     y: np.ndarray
     vx: np.ndarray
     vy: np.ndarray
-    state: np.ndarray  # 0 = fresca, 1 = usada
+    state: np.ndarray
 
 
 @dataclass
 class Trajectory:
-    """Trayectoria completa parseada de un sim_N_*_run_*.txt."""
     N: int
     steps: List[TimeStep] = field(default_factory=list)
 
@@ -66,32 +37,31 @@ class Trajectory:
         return np.array([s.t for s in self.steps])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Clase principal
-# ─────────────────────────────────────────────────────────────────────────────
-
 class Plotter:
-    """
-    Clase para graficar los .txt generados por el motor de simulación y el
-    analizador. Produce las figuras requeridas por los puntos 1.1, 1.2, 1.3 y 1.4
-    del enunciado.
-    """
-
-    # Parámetros físicos (deben coincidir con los del simulador)
     R_OBS = 1.0
     R_PARTICLE = 1.0
     R_RECINTO = 40.0
-    SIGMA_OBS = R_OBS + R_PARTICLE          # 2.0
-    SIGMA_WALL = R_RECINTO - R_PARTICLE     # 39.0
+    SIGMA_OBS = R_OBS + R_PARTICLE
+    SIGMA_WALL = R_RECINTO - R_PARTICLE
 
-    # Estilo
-    _COLOR_FRESH = "#2ecc71"
-    _COLOR_USED = "#9b59b6"
-    _COLOR_J = "#e74c3c"
-    _COLOR_RHO = "#3498db"
-    _COLOR_V = "#f39c12"
+    _COLOR_FRESH = "#009E73"   # verde
+    _COLOR_USED  = "#CC79A7"   # rosa/magenta
+    _COLOR_J     = "#D55E00"   # rojo-naranja
+    _COLOR_RHO   = "#0072B2"   # azul
+    _COLOR_V     = "#E69F00"   # amarillo-naranja
 
-    # Regex para los nombres de archivo (versión normal y versión light)
+    # Paleta de alto contraste (Okabe-Ito, accesible para daltónicos)
+    # Usa colores con fuerte contraste en tono + luminosidad para que se
+    # distingan bien incluso en gráficos muy densos.
+    _PALETTE = ["#0072B2",  # azul
+                "#D55E00",  # rojo-naranja
+                "#009E73",  # verde oscuro
+                "#CC79A7",  # magenta
+                "#F0E442",  # amarillo
+                "#56B4E9",  # celeste
+                "#E69F00",  # naranja
+                "#000000"]  # negro
+
     _SIM_RE    = re.compile(r"sim_N_(\d+)_run_(\d+)(_light)?\.txt$")
     _CFC_RE    = re.compile(r"cfc_sim_N_(\d+)_run_(\d+)\.txt$")
     _CFC_LIGHT_RE = re.compile(r"cfc_sim_N_(\d+)_run_(\d+)_light\.txt$")
@@ -99,45 +69,23 @@ class Plotter:
     _FU_LIGHT_RE  = re.compile(r"fu_sim_N_(\d+)_run_(\d+)_light\.txt$")
     _RADIAL_RE = re.compile(r"radial_sim_N_(\d+)_run_(\d+)\.txt$")
     _RADIAL_LIGHT_RE = re.compile(r"radial_sim_N_(\d+)_run_(\d+)_light\.txt$")
-    # Archivo ligero producido por Simulator.runStream  (events_N_<N>_run_<r>.txt)
     _EVENTS_RE = re.compile(r"events_N_(\d+)_run_(\d+)\.txt$")
 
-    def __init__(
-        self,
-        sim_dir: str = "simulations",
-        results_dir: str = "results",
-        out_dir: str = "figures",
-        dS: float = 0.2,
-    ):
+    def __init__(self, sim_dir="simulations", results_dir="results",
+                 out_dir="figures", dS=0.2):
         self.sim_dir = Path(sim_dir)
         self.results_dir = Path(results_dir)
         self.out_dir = Path(out_dir)
         self.dS = dS
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── API pública ────────────────────────────────────────────────────────
-
-    def plot_all(
-        self,
-        regression_window: Tuple[float, Optional[float]] = (0.0, None),
-        fu_ymax: float = 0.4,
-    ) -> None:
-        """Genera todas las figuras (1.1 a 1.4)."""
+    def plot_all(self, regression_window=(0.0, None), fu_ymax=0.4):
         self.plot_execution_time()
         self.plot_cfc_and_J(regression_window=regression_window)
         self.plot_fu(y_max=fu_ymax)
         self.plot_radial_profiles()
 
-    # ── 1.1 ── Tiempo de ejecución vs N ──────────────────────────────────
-
-    def plot_execution_time(self, timing_csv: Optional[str] = None) -> Path:
-        """
-        Punto 1.1: grafica tiempo de ejecución vs N.
-
-        Si existe un CSV con columnas (N, avg_time_s, std_time_s) lo usa
-        directamente; si no, mide el tiempo de lectura del archivo de simulación
-        como proxy del cómputo realizado.
-        """
+    def plot_execution_time(self, timing_csv=None):
         csv_path = Path(timing_csv) if timing_csv else (self.results_dir / "timing.csv")
         fig, ax = plt.subplots(figsize=(7, 5))
 
@@ -148,7 +96,7 @@ class Plotter:
             ax.set_ylabel(r"Tiempo de ejecución $\langle T \rangle$ [s]")
             source = f"CSV ({csv_path.name})"
         else:
-            per_N: Dict[int, List[float]] = {}
+            per_N = {}
             for path, N, _run in self._iter_sim_files():
                 t0 = time.perf_counter()
                 self._scan_trajectory_file(path)
@@ -177,49 +125,57 @@ class Plotter:
         fig.savefig(out, dpi=150)
         plt.close(fig)
         print(f"[1.1] → {out}")
+
+        # Gráfico adicional: log(t) vs N
+        fig2, ax2 = plt.subplots(figsize=(7, 5))
+        pos_mask = mean_t > 0
+        ax2.errorbar(
+            Ns[pos_mask],
+            np.log(mean_t[pos_mask]),
+            yerr=std_t[pos_mask] / mean_t[pos_mask],  # propagación: σ_log = σ/μ
+            fmt="o-", capsize=4, color=self._COLOR_J,
+            label=r"$\log(\langle T \rangle)$",
+        )
+        ax2.set_xlabel("N (número de partículas)")
+        ax2.set_ylabel(r"$\log(\langle T \rangle)$  [log(s)]")
+        ax2.set_title("1.1 — log(Tiempo de ejecución) en función de N")
+        ax2.grid(True, alpha=0.3)
+        ax2.legend()
+        fig2.tight_layout()
+        out_log = self.out_dir / "1_1_log_tiempo_vs_N.png"
+        fig2.savefig(out_log, dpi=150)
+        plt.close(fig2)
+        print(f"[1.1] → {out_log}")
+
         return out
 
-    # ── 1.2 ── Cfc(t) y ⟨J⟩(N) ─────────────────────────────────────────────
-
-    def plot_cfc_and_J(
-        self,
-        regression_window: Tuple[float, Optional[float]] = (0.0, None),
-    ) -> Tuple[Path, Path]:
-        """
-        Punto 1.2: grafica Cfc(t) (varias realizaciones agrupadas por N) y
-        ⟨J⟩(N) con barras de error.
-
-        regression_window: (t_min, t_max) para el ajuste lineal de Cfc(t).
-                           Usar t_max=None para llegar hasta el final.
-        """
+    def plot_cfc_and_J(self, regression_window=(0.0, None)):
         cfc_by_N = self._load_cfc_per_N()
         if not cfc_by_N:
             raise FileNotFoundError(
                 f"No encontré archivos cfc_sim_N_*_run_*.txt en {self.results_dir}")
 
         Ns = sorted(cfc_by_N.keys())
+        t_max_global = max(r[0][-1] for runs in cfc_by_N.values() for r in runs)
 
         fig, ax = plt.subplots(figsize=(8, 5))
-        cmap = plt.cm.viridis
-        J_mean = []
-        J_std = []
+        cmap = self._PALETTE
+        J_mean, J_std = [], []
 
         for i, N in enumerate(Ns):
-            color = cmap(i / max(1, len(Ns) - 1))
+            color = cmap[i % len(cmap)]
             slopes = []
             for j, (t, cfc) in enumerate(cfc_by_N[N]):
                 label = f"N={N}" if j == 0 else None
                 ax.plot(t, cfc, color=color, alpha=0.55, linewidth=1.0, label=label)
-
-                J = self._linear_slope(t, cfc, regression_window)
-                slopes.append(J)
-
+                slopes.append(self._linear_slope(t, cfc, regression_window))
             J_mean.append(np.mean(slopes))
             J_std.append(np.std(slopes, ddof=1) if len(slopes) > 1 else 0.0)
 
         ax.set_xlabel("t [s]")
         ax.set_ylabel(r"$C_{fc}(t)$  [colisiones acumuladas]")
         ax.set_title("1.2 — Conteo acumulado de partículas frescas → usadas")
+        ax.set_xlim(0, t_max_global)
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
@@ -243,41 +199,43 @@ class Plotter:
 
         return cfc_path, j_path
 
-    # ── 1.3 ── Fu(t), t_estacionario, F_est(N) ────────────────────────────
+    def plot_fu(self, tail_fraction=0.2, threshold=0.9, y_max=0.4):
+        # ── TIEMPOS AL ESTACIONARIO MANUALES ─────────────────────────────────
+        # Completar con {N: t_onset} para cada N que se quiera fijar manualmente.
+        # Para los N ausentes se usa el modo automático (último tail_fraction).
+        # Ejemplo: T_ONSET_MANUAL = {50: 200.0, 100: 350.0, 200: 500.0}
+        T_ONSET_MANUAL = {10:0.0, 50:100.0, 100:200.0, 200:300.0, 400:800.0, 800:2000.0}
+        # ─────────────────────────────────────────────────────────────────────
 
-    def plot_fu(
-        self,
-        tail_fraction: float = 0.2,
-        threshold: float = 0.9,
-        y_max: float = 0.4,
-    ) -> Tuple[Path, Path, Path]:
-        """
-        Punto 1.3: evolución de Fu(t), reporta F_est y t_estacionario para cada N.
-        Los promedios del estacionario se calculan con la fracción final
-        `tail_fraction` de cada serie, y t_estacionario es el primer instante
-        en que Fu alcanza `threshold * F_est`.
-        """
         fu_by_N = self._load_fu_per_N()
         if not fu_by_N:
             raise FileNotFoundError(
                 f"No encontré archivos fu_sim_N_*_run_*.txt en {self.results_dir}")
 
         Ns = sorted(fu_by_N.keys())
+        t_max_global = max(r[0][-1] for runs in fu_by_N.values() for r in runs)
 
         fig, ax = plt.subplots(figsize=(8, 5))
-        cmap = plt.cm.plasma
+        cmap = self._PALETTE
 
         F_mean, F_std = [], []
         tstat_mean, tstat_std = [], []
+        fu_avg_per_N = {}
 
         for i, N in enumerate(Ns):
-            color = cmap(i / max(1, len(Ns) - 1))
+            color = cmap[i % len(cmap)]
             Fs, ts = [], []
+            t_onset = T_ONSET_MANUAL.get(N, None)
             for j, (t, fu) in enumerate(fu_by_N[N]):
                 label = f"N={N}" if j == 0 else None
-                ax.plot(t, fu, color=color, alpha=0.55, linewidth=1.0, label=label)
-                Fest = self._stationary_value(fu, tail_fraction)
-                tstat = self._time_to_fraction(t, fu, threshold * Fest)
+                ax.plot(t, fu, color=color, alpha=0.75, linewidth=1.0, label=label)
+                if t_onset is not None:
+                    mask = t >= t_onset
+                    Fest = float(np.mean(fu[mask])) if mask.sum() > 0 else float(fu[-1])
+                    tstat = t_onset
+                else:
+                    Fest = self._stationary_value(fu, tail_fraction)
+                    tstat = self._time_to_fraction(t, fu, threshold * Fest)
                 Fs.append(Fest)
                 ts.append(tstat)
 
@@ -286,10 +244,25 @@ class Plotter:
             tstat_mean.append(np.mean(ts))
             tstat_std.append(np.std(ts, ddof=1) if len(ts) > 1 else 0.0)
 
+            runs = fu_by_N[N]
+            t_common = np.linspace(
+                max(r[0][0] for r in runs),
+                min(r[0][-1] for r in runs),
+                500,
+            )
+            interp_matrix = np.array([np.interp(t_common, r[0], r[1]) for r in runs])
+            fu_avg_per_N[N] = (
+                t_common,
+                interp_matrix.mean(axis=0),
+                interp_matrix.std(axis=0, ddof=1) if len(runs) > 1
+                else np.zeros(len(t_common)),
+            )
+
         ax.set_xlabel("t [s]")
         ax.set_ylabel(r"$F_u(t) = N_u(t)/N$")
         ax.set_title("1.3 — Fracción de partículas usadas en el tiempo")
-        ax.set_ylim(0.0, y_max)
+        ax.set_xlim(0, t_max_global)
+        ax.set_ylim(0.0, 0.35)
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
@@ -323,18 +296,31 @@ class Plotter:
         tstat_path = self.out_dir / "1_3_tEstacionario_vs_N.png"
         fig.savefig(tstat_path, dpi=150)
         plt.close(fig)
-        print(f"[1.3] → {tstat_path}")
+        print(f"[1.3] -> {tstat_path}")
 
-        return fu_path, fest_path, tstat_path
+        fig, ax = plt.subplots(figsize=(8, 5))
+        for i, N in enumerate(Ns):
+            color = cmap[i % len(cmap)]
+            t_c, fu_avg, fu_std = fu_avg_per_N[N]
+            ax.plot(t_c, fu_avg, color=color, linewidth=2.0, label=f"N={N}")
+            ax.fill_between(t_c, fu_avg - fu_std, fu_avg + fu_std,
+                            color=color, alpha=0.2)
+        ax.set_xlabel("t [s]")
+        ax.set_ylabel(r"$\langle F_u \rangle (t)$")
+        ax.set_title(r"1.3 --- $\langle F_u \rangle$ promediado entre realizaciones")
+        ax.set_xlim(0, t_max_global)
+        ax.set_ylim(0.0, 0.3)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fu_avg_path = self.out_dir / "1_3_Fu_promedio_vs_t.png"
+        fig.savefig(fu_avg_path, dpi=150)
+        plt.close(fig)
+        print(f"[1.3] -> {fu_avg_path}")
 
-    # ── 1.4 ── Perfiles radiales ρ(S), |v(S)|, Jin(S) ─────────────────────
+        return fu_path, fest_path, tstat_path, fu_avg_path
 
-    def plot_radial_profiles(self, S_target: float = 2.0) -> Tuple[Path, Path]:
-        """
-        Punto 1.4: promedia ρ_fin, v_fin y Jin sobre tiempos y realizaciones
-        para cada N, y grafica los tres perfiles. Además grafica los tres
-        observables en la capa cercana a S = S_target en función de N.
-        """
+    def plot_radial_profiles(self, S_target=2.0):
         radial_by_N = self._load_radial_per_N()
         if not radial_by_N:
             raise FileNotFoundError(
@@ -348,22 +334,19 @@ class Plotter:
         S_outer = S_inner + self.dS
         shell_area = np.pi * (S_outer**2 - S_inner**2)
 
-        profiles: Dict[int, Dict[str, np.ndarray]] = {}
-        # Para el gráfico vs N usamos también la dispersión entre realizaciones.
+        profiles = {}
         rho_at_target_mean, rho_at_target_std = [], []
         v_at_target_mean, v_at_target_std = [], []
         J_at_target_mean, J_at_target_std = [], []
 
         fig_profiles, axes = plt.subplots(1, 3, figsize=(15, 4.5))
-        cmap = plt.cm.cividis
+        cmap = self._PALETTE
 
         for i, N in enumerate(Ns):
-            realizations = radial_by_N[N]   # List[List[snapshot_dict]]
+            realizations = radial_by_N[N]
             if not realizations:
                 continue
 
-            # Calculo ρ_r(S), |v_r(S)|, J_r(S) por realización, promediando
-            # todos los snapshots de esa realización.
             rho_runs = np.zeros((len(realizations), nLayers))
             v_runs = np.zeros((len(realizations), nLayers))
             J_runs = np.zeros((len(realizations), nLayers))
@@ -390,7 +373,6 @@ class Plotter:
                 v_runs[r] = v_r
                 J_runs[r] = rho_r * v_r
 
-            # Media y σ entre realizaciones
             rho_mean = rho_runs.mean(axis=0)
             rho_std = rho_runs.std(axis=0, ddof=1) if len(realizations) > 1 else np.zeros(nLayers)
             v_mean = v_runs.mean(axis=0)
@@ -401,17 +383,16 @@ class Plotter:
             profiles[N] = {"rho": rho_mean, "v": v_mean, "J": J_mean,
                            "rho_std": rho_std, "v_std": v_std, "J_std": J_std}
 
-            color = cmap(i / max(1, len(Ns) - 1))
-            # Bandas de error (gris claro, coloreado por N encima para que se distinga)
+            color = cmap[i % len(cmap)]
             axes[0].fill_between(S_centers, rho_mean - rho_std, rho_mean + rho_std,
-                                 color=color, alpha=0.18, linewidth=0)
-            axes[0].plot(S_centers, rho_mean, color=color, label=f"N={N}")
+                                 color=color, alpha=0.10, linewidth=0)
+            axes[0].plot(S_centers, rho_mean, color=color, linewidth=2.0, label=f"N={N}")
             axes[1].fill_between(S_centers, np.clip(v_mean - v_std, 0, None), v_mean + v_std,
-                                 color=color, alpha=0.18, linewidth=0)
-            axes[1].plot(S_centers, v_mean, color=color, label=f"N={N}")
+                                 color=color, alpha=0.10, linewidth=0)
+            axes[1].plot(S_centers, v_mean, color=color, linewidth=2.0, label=f"N={N}")
             axes[2].fill_between(S_centers, np.clip(J_mean - J_std, 0, None), J_mean + J_std,
-                                 color=color, alpha=0.18, linewidth=0)
-            axes[2].plot(S_centers, J_mean, color=color, label=f"N={N}")
+                                 color=color, alpha=0.10, linewidth=0)
+            axes[2].plot(S_centers, J_mean, color=color, linewidth=2.0, label=f"N={N}")
 
             idx_target = int(np.argmin(np.abs(S_centers - S_target)))
             rho_at_target_mean.append(rho_mean[idx_target])
@@ -471,71 +452,53 @@ class Plotter:
 
         return prof_path, targ_path
 
-    # ─────────────────────────────────────────────────────────────────────
-    #  Parseo de archivos
-    # ─────────────────────────────────────────────────────────────────────
-
     def _iter_sim_files(self):
         for p in sorted(self.sim_dir.glob("sim_N_*_run_*.txt")):
             m = self._SIM_RE.search(p.name)
             if m:
                 yield p, int(m.group(1)), int(m.group(2))
 
-    def _scan_trajectory_file(self, path: Path) -> None:
-        """
-        Recorre el archivo sin construir la trayectoria completa.
-        Sirve para medir costo de lectura/parseo como proxy.
-        """
+    def _scan_trajectory_file(self, path):
         with open(path, "r") as f:
             while True:
                 header = f.readline()
                 if not header:
                     break
-
                 header = header.strip()
                 if not header:
                     continue
-
                 parts = header.split()
                 if len(parts) != 2:
                     continue
-
                 try:
                     N = int(parts[0])
                     float(parts[1])
                 except ValueError:
                     continue
-
                 for _ in range(N):
                     line = f.readline()
                     if not line:
                         return
 
-    def _parse_trajectory(self, path: Path) -> Trajectory:
-        """Parsea sim_N_*_run_*.txt de forma más rápida usando bloques."""
-        steps: List[TimeStep] = []
+    def _parse_trajectory(self, path):
+        steps = []
         N = 0
-
         with open(path, "r") as f:
             while True:
                 header = f.readline()
                 if not header:
                     break
-
                 header = header.strip()
                 if not header:
                     continue
-
                 parts = header.split()
                 if len(parts) != 2:
                     continue
-
                 try:
                     N = int(parts[0])
                     t = float(parts[1])
                 except ValueError:
                     continue
-
                 block = []
                 for _ in range(N):
                     line = f.readline()
@@ -543,36 +506,24 @@ class Plotter:
                         block = []
                         break
                     block.append(line)
-
                 if len(block) != N:
                     break
-
                 try:
                     data = np.loadtxt(block)
                 except ValueError:
                     continue
-
                 if data.ndim == 1:
                     data = data.reshape(1, -1)
-
-                xs = data[:, 1].copy()
-                ys = data[:, 2].copy()
-                vxs = data[:, 3].copy()
-                vys = data[:, 4].copy()
-                states = data[:, 5].astype(np.int32)
-
-                steps.append(TimeStep(t, xs, ys, vxs, vys, states))
-
+                steps.append(TimeStep(
+                    t, data[:, 1].copy(), data[:, 2].copy(),
+                    data[:, 3].copy(), data[:, 4].copy(),
+                    data[:, 5].astype(np.int32),
+                ))
         return Trajectory(N=N, steps=steps)
 
     @staticmethod
-    def _read_tab_table(path: Path) -> np.ndarray:
-        """
-        Lee un archivo separado por tabs (o cualquier whitespace), ignorando
-        líneas vacías y comentarios (#). Reemplaza la coma decimal por punto
-        para tolerar el locale AR/ES del Java. Devuelve una matriz (R×C).
-        """
-        rows: List[List[float]] = []
+    def _read_tab_table(path):
+        rows = []
         with open(path, "r") as f:
             for line in f:
                 s = line.strip()
@@ -589,23 +540,14 @@ class Plotter:
         width = min(len(r) for r in rows)
         return np.array([r[:width] for r in rows])
 
-    def _load_events_file(self, path: Path) -> Dict[str, object]:
-        """
-        Parsea un archivo events_N_*_run_*.txt (formato streaming del simulador).
-        Devuelve dict con:
-          N, tf, snapDt,
-          t_obs, t_wall       (arrays de tiempos de cambio fresca↔usada)
-          snaps               ([(t, shell_idx → (count, sumV))], ordenados por t)
-        """
+    def _load_events_file(self, path):
         N = 0
         tf = 0.0
         snap_dt = 0.0
-        t_obs: List[float] = []
-        t_wall: List[float] = []
-        snaps: List[Tuple[float, Dict[int, Tuple[int, float]]]] = []
-
-        current_snap: Optional[Dict[int, Tuple[int, float]]] = None
-        current_t: float = 0.0
+        t_obs, t_wall = [], []
+        snaps = []
+        current_snap = None
+        current_t = 0.0
         remaining_lines = 0
 
         with open(path, "r") as f:
@@ -614,7 +556,6 @@ class Plotter:
                 if not line:
                     continue
                 if line.startswith("#"):
-                    # Metadata: "# N 800", "# tf 1000.0", "# radialSnapDt 0.5"
                     tok = line.replace(",", ".").split()
                     if len(tok) >= 3 and tok[1] == "N":
                         try: N = int(tok[2])
@@ -631,7 +572,6 @@ class Plotter:
                 tok = line.split()
 
                 if remaining_lines > 0 and current_snap is not None:
-                    # Línea dentro de un SNAP: x y vx vy state
                     if len(tok) >= 5:
                         x = float(tok[0]); y = float(tok[1])
                         vx = float(tok[2]); vy = float(tok[3])
@@ -641,7 +581,7 @@ class Plotter:
                             if r > 0:
                                 rdotv = x*vx + y*vy
                                 if rdotv < 0:
-                                    v_radial = rdotv / r    # negativo, hacia el centro
+                                    v_radial = rdotv / r
                                     idx = int((r - self.SIGMA_OBS) / self.dS)
                                     if idx < 0:
                                         idx = 0
@@ -675,17 +615,11 @@ class Plotter:
             "snaps": snaps,
         }
 
-    def _has_events_files(self) -> bool:
+    def _has_events_files(self):
         return any(self.results_dir.glob("events_N_*_run_*.txt"))
 
-    def _load_cfc_per_N(self) -> Dict[int, List[Tuple[np.ndarray, np.ndarray]]]:
-        """
-        Lee cfc_sim_N_*_run_*.txt, cfc_sim_N_*_run_*_light.txt y events_*.txt
-        → {N: [(t, cfc), ...]}. Las tres fuentes se combinan si coexisten.
-        """
-        out: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = {}
-
-        # Fuente 1: archivos events_* (runStream)
+    def _load_cfc_per_N(self):
+        out = {}
         for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
             m = self._EVENTS_RE.search(p.name)
             if not m:
@@ -697,9 +631,8 @@ class Plotter:
             cfc = np.concatenate([[0], np.arange(1, len(t_obs) + 1), [len(t_obs)]])
             out.setdefault(N, []).append((t, cfc.astype(float)))
 
-        # Fuente 2: archivos cfc_* normales y _light
         for pattern, regex in [
-            ("cfc_sim_N_*_run_*.txt",       self._CFC_RE),
+            ("cfc_sim_N_*_run_*.txt", self._CFC_RE),
             ("cfc_sim_N_*_run_*_light.txt", self._CFC_LIGHT_RE),
         ]:
             for p in sorted(self.results_dir.glob(pattern)):
@@ -710,20 +643,11 @@ class Plotter:
                 data = self._read_tab_table(p)
                 if data.size == 0:
                     continue
-                t = data[:, 0]
-                cfc = data[:, 1]
-                out.setdefault(N, []).append((t, cfc))
-
+                out.setdefault(N, []).append((data[:, 0], data[:, 1]))
         return out
 
-    def _load_fu_per_N(self) -> Dict[int, List[Tuple[np.ndarray, np.ndarray]]]:
-        """
-        Lee fu_sim_N_*_run_*.txt, fu_sim_N_*_run_*_light.txt y events_*.txt
-        → {N: [(t, fu), ...]}. Las tres fuentes se combinan si coexisten.
-        """
-        out: Dict[int, List[Tuple[np.ndarray, np.ndarray]]] = {}
-
-        # Fuente 1: archivos events_* (runStream)
+    def _load_fu_per_N(self):
+        out = {}
         for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
             m = self._EVENTS_RE.search(p.name)
             if not m:
@@ -741,9 +665,8 @@ class Plotter:
             fu = np.array(nu, dtype=float) / max(1, N)
             out.setdefault(N, []).append((np.array(ts), fu))
 
-        # Fuente 2: archivos fu_* normales y _light
         for pattern, regex in [
-            ("fu_sim_N_*_run_*.txt",       self._FU_RE),
+            ("fu_sim_N_*_run_*.txt", self._FU_RE),
             ("fu_sim_N_*_run_*_light.txt", self._FU_LIGHT_RE),
         ]:
             for p in sorted(self.results_dir.glob(pattern)):
@@ -754,21 +677,11 @@ class Plotter:
                 data = self._read_tab_table(p)
                 if data.size == 0:
                     continue
-                t = data[:, 0]
-                fu = data[:, 2]
-                out.setdefault(N, []).append((t, fu))
-
+                out.setdefault(N, []).append((data[:, 0], data[:, 2]))
         return out
 
-    def _load_radial_per_N(self) -> Dict[int, List[List[Dict[int, Tuple[int, float]]]]]:
-        """
-        Lee radial_sim_N_*_run_*.txt, radial_sim_N_*_run_*_light.txt y events_*.txt
-        → {N: [realization_1_snaps, realization_2_snaps, ...]}.
-        Las tres fuentes se combinan si coexisten.
-        """
-        out: Dict[int, List[List[Dict[int, Tuple[int, float]]]]] = {}
-
-        # Fuente 1: archivos events_* (runStream)
+    def _load_radial_per_N(self):
+        out = {}
         for p in sorted(self.results_dir.glob("events_N_*_run_*.txt")):
             m = self._EVENTS_RE.search(p.name)
             if not m:
@@ -778,9 +691,8 @@ class Plotter:
             snapshots = [snap_dict for (_t, snap_dict) in ev["snaps"]]
             out.setdefault(N, []).append(snapshots)
 
-        # Fuente 2: archivos radial_* normales y _light
         for pattern, regex in [
-            ("radial_sim_N_*_run_*.txt",       self._RADIAL_RE),
+            ("radial_sim_N_*_run_*.txt", self._RADIAL_RE),
             ("radial_sim_N_*_run_*_light.txt", self._RADIAL_LIGHT_RE),
         ]:
             for p in sorted(self.results_dir.glob(pattern)):
@@ -788,8 +700,8 @@ class Plotter:
                 if not m:
                     continue
                 N = int(m.group(1))
-                snapshots: List[Dict[int, Tuple[int, float]]] = []
-                current: Dict[int, Tuple[int, float]] = {}
+                snapshots = []
+                current = {}
                 in_block = False
 
                 with open(p, "r") as f:
@@ -809,7 +721,6 @@ class Plotter:
                             continue
                         if line.startswith("#"):
                             continue
-
                         tok = line.replace(",", ".").split()
                         if len(tok) < 5:
                             continue
@@ -825,26 +736,14 @@ class Plotter:
                         snapshots.append(current)
 
                 out.setdefault(N, []).append(snapshots)
-
         return out
 
-    # ─────────────────────────────────────────────────────────────────────
-    #  Lectura robusta del timing.csv
-    # ─────────────────────────────────────────────────────────────────────
-
     @staticmethod
-    def _read_timing_csv(csv_path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Parsea timing.csv tolerante al bug de locale: si Java se ejecutó en una
-        JVM con Locale AR/ES, los decimales se escribieron con coma y el archivo
-        quedó con 7 columnas por fila en vez de 4.
-        """
+    def _read_timing_csv(csv_path):
         with open(csv_path, "r") as f:
             header = f.readline().strip().split(",")
             ncols = len(header)
-            rows_mean_t = []
-            rows_std_t = []
-            rows_N = []
+            rows_mean_t, rows_std_t, rows_N = [], [], []
             for line in f:
                 line = line.strip()
                 if not line:
@@ -868,17 +767,8 @@ class Plotter:
                 np.array(rows_mean_t)[order],
                 np.array(rows_std_t)[order])
 
-    # ─────────────────────────────────────────────────────────────────────
-    #  Utilidades estadísticas
-    # ─────────────────────────────────────────────────────────────────────
-
     @staticmethod
-    def _linear_slope(
-        t: np.ndarray,
-        y: np.ndarray,
-        window: Tuple[float, Optional[float]],
-    ) -> float:
-        """Pendiente por mínimos cuadrados de y(t) en la ventana indicada."""
+    def _linear_slope(t, y, window):
         tmin, tmax = window
         mask = t >= tmin
         if tmax is not None:
@@ -889,8 +779,7 @@ class Plotter:
         return float(slope)
 
     @staticmethod
-    def _stationary_value(y: np.ndarray, tail_fraction: float) -> float:
-        """Promedio de la fracción final `tail_fraction` como estimador del estacionario."""
+    def _stationary_value(y, tail_fraction):
         n = len(y)
         if n == 0:
             return 0.0
@@ -898,37 +787,27 @@ class Plotter:
         return float(np.mean(y[cut:]))
 
     @staticmethod
-    def _time_to_fraction(t: np.ndarray, y: np.ndarray, target: float) -> float:
-        """Primer instante en el que y(t) ≥ target (si no llega, devuelve t[-1])."""
+    def _time_to_fraction(t, y, target):
         idx = np.argmax(y >= target)
         if y[idx] < target:
             return float(t[-1])
         return float(t[idx])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _main():
     ap = argparse.ArgumentParser(description="Grafica los .txt del TP3.")
-    ap.add_argument("--sim-dir", default="simulations",
-                    help="Directorio con sim_N_*_run_*.txt")
-    ap.add_argument("--results-dir", default="results",
-                    help="Directorio con cfc_*/fu_*/radial_* generados por SimulationAnalyzer")
-    ap.add_argument("--out", default="figures", help="Directorio de salida de las figuras")
-    ap.add_argument("--dS", type=float, default=0.2, help="Ancho de capa radial [m]")
-    ap.add_argument("--all", action="store_true", help="Genera todos los gráficos (1.1 a 1.4)")
+    ap.add_argument("--sim-dir", default="simulations")
+    ap.add_argument("--results-dir", default="results")
+    ap.add_argument("--out", default="figures")
+    ap.add_argument("--dS", type=float, default=0.2)
+    ap.add_argument("--all", action="store_true")
     ap.add_argument("--timing", action="store_true")
     ap.add_argument("--cfc", action="store_true")
     ap.add_argument("--fu", action="store_true")
     ap.add_argument("--radial", action="store_true")
-    ap.add_argument("--reg-tmin", type=float, default=0.0,
-                    help="t mínimo para el ajuste lineal de Cfc(t)")
-    ap.add_argument("--reg-tmax", type=float, default=None,
-                    help="t máximo para el ajuste lineal de Cfc(t) (default: fin)")
-    ap.add_argument("--fu-ymax", type=float, default=0.4,
-                    help="Tope del eje y para Fu(t) (default: 0.4)")
+    ap.add_argument("--reg-tmin", type=float, default=0.0)
+    ap.add_argument("--reg-tmax", type=float, default=None)
+    ap.add_argument("--fu-ymax", type=float, default=0.4)
     args = ap.parse_args()
 
     p = Plotter(sim_dir=args.sim_dir, results_dir=args.results_dir,
@@ -940,14 +819,10 @@ def _main():
                    fu_ymax=args.fu_ymax)
         return
 
-    if args.timing:
-        p.plot_execution_time()
-    if args.cfc:
-        p.plot_cfc_and_J(regression_window=(args.reg_tmin, args.reg_tmax))
-    if args.fu:
-        p.plot_fu(y_max=args.fu_ymax)
-    if args.radial:
-        p.plot_radial_profiles()
+    if args.timing: p.plot_execution_time()
+    if args.cfc:    p.plot_cfc_and_J(regression_window=(args.reg_tmin, args.reg_tmax))
+    if args.fu:     p.plot_fu(y_max=args.fu_ymax)
+    if args.radial: p.plot_radial_profiles()
 
 
 if __name__ == "__main__":
