@@ -147,6 +147,34 @@ class Plotter:
         plt.close(fig2)
         print(f"[1.1] → {out_log}")
 
+        # Gráfico adicional: log(t) vs log(N)
+        fig3, ax3 = plt.subplots(figsize=(7, 5))
+        pos_mask2 = (mean_t > 0) & (Ns > 0)
+        log_N = np.log(Ns[pos_mask2])
+        log_t = np.log(mean_t[pos_mask2])
+        sigma_log_t = std_t[pos_mask2] / mean_t[pos_mask2]  # propagación: σ_log = σ/μ
+        ax3.errorbar(
+            log_N, log_t, yerr=sigma_log_t,
+            fmt="o-", capsize=4, color=self._COLOR_J,
+            label=r"$\log(\langle T \rangle)$",
+        )
+        # Ajuste lineal para estimar el exponente de la ley de potencia T ~ N^alpha
+        if len(log_N) >= 2:
+            alpha, intercept = np.polyfit(log_N, log_t, 1)
+            fit_line = alpha * log_N + intercept
+            ax3.plot(log_N, fit_line, "--", color="gray",
+                     label=fr"Ajuste: $\alpha = {alpha:.2f}$")
+        ax3.set_xlabel(r"$\log(N)$")
+        ax3.set_ylabel(r"$\log(\langle T \rangle)$  [log(s)]")
+        ax3.set_title("1.1 — log(Tiempo de ejecución) vs log(N)")
+        ax3.grid(True, alpha=0.3)
+        ax3.legend()
+        fig3.tight_layout()
+        out_loglog = self.out_dir / "1_1_loglog_tiempo_vs_N.png"
+        fig3.savefig(out_loglog, dpi=150)
+        plt.close(fig3)
+        print(f"[1.1] → {out_loglog}")
+
         return out
 
     def plot_cfc_and_J(self, regression_window=(0.0, None)):
@@ -204,7 +232,7 @@ class Plotter:
         # Completar con {N: t_onset} para cada N que se quiera fijar manualmente.
         # Para los N ausentes se usa el modo automático (último tail_fraction).
         # Ejemplo: T_ONSET_MANUAL = {50: 200.0, 100: 350.0, 200: 500.0}
-        T_ONSET_MANUAL = {10:0.0, 50:100.0, 100:200.0, 200:300.0, 400:800.0, 800:2000.0}
+        T_ONSET_MANUAL = {}   # <-- EDITAR AQUI
         # ─────────────────────────────────────────────────────────────────────
 
         fu_by_N = self._load_fu_per_N()
