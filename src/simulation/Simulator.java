@@ -35,12 +35,6 @@ public class Simulator {
     private Particle[]   particles;
     private PriorityQueue<Event> pq;
     private double       tNow;
-    private int          nUsed;
-
-    // ── Observables ───────────────────────────────────────────────────────────
-    private List<double[]> cfcHistory;
-    private List<double[]> fuHistory;
-    private List<Object[]> radialSnapshots;
 
     public Simulator(int N, double tf) {
         this.N  = N;
@@ -52,34 +46,29 @@ public class Simulator {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Ejecuta la simulación acumulando observables en memoria.
-     * Útil sólo para N y tf chicos. Para runs grandes usar {@link #runStream}.
+     * Ejecuta la simulación volcando todos los frames al archivo de trayectoria.
+     * Pensado para N y tf chicos/medios donde el archivo denso es manejable.
      */
     public SimulationResult run(
-            String  outputFile,
-            Long    seed,
-            int     writeEvery,
-            int     snapshotEvery) throws IOException {
-        return runInternal(outputFile, seed, writeEvery, snapshotEvery,
+            String outputFile,
+            Long   seed,
+            int    writeEvery) throws IOException {
+        return runInternal(outputFile, seed, writeEvery,
                            null, Double.POSITIVE_INFINITY, /*stream=*/false);
     }
 
     /**
      * Ejecuta la simulación en modo STREAMING: escribe directamente a disco
-     * y no acumula listas de historia en memoria. Recomendado para N ≥ ~300
-     * y/o tf grande.
+     * sin acumular historia en memoria. Recomendado para benchmarks.
      *
-     * @param outputFile       archivo de trayectoria completo (null → no se escribe).
-     *                         Atención: si no es null y writeEvery=1, puede generar
-     *                         archivos muy grandes. Para runs de análisis conviene
-     *                         pasarlo como null y usar solo el analysisFile.
+     * @param outputFile       archivo de trayectoria (null → no se escribe).
      * @param analysisFile     archivo ligero de análisis (null → no se escribe).
-     *                         Contiene registros EVT y SNAP que permiten
-     *                         reconstruir Cfc(t), Fu(t) y perfiles radiales.
+     *                         Contiene registros EVT y SNAP para reconstruir
+     *                         Cfc(t), Fu(t) y perfiles radiales.
      * @param seed             semilla (null → aleatorio)
      * @param writeEvery       frecuencia (en eventos) de escritura de trayectoria
-     * @param radialSnapDt     intervalo de tiempo (en s) entre snapshots radiales
-     *                         dentro del analysisFile. ≤0 desactiva snapshots.
+     * @param radialSnapDt     intervalo de tiempo (en s) entre snapshots
+     *                         radiales dentro del analysisFile. ≤0 desactiva.
      */
     public SimulationResult runStream(
             String outputFile,
@@ -87,30 +76,20 @@ public class Simulator {
             Long   seed,
             int    writeEvery,
             double radialSnapDt) throws IOException {
-        return runInternal(outputFile, seed, writeEvery, /*snapshotEvery=*/0,
+        return runInternal(outputFile, seed, writeEvery,
                            analysisFile, radialSnapDt, /*stream=*/true);
     }
 
     /**
-     * Ejecuta la simulación en modo LIGERO: registra el estado del sistema
-     * en el archivo de salida sólo cada 1000 eventos, reduciendo drásticamente
-     * el tamaño del archivo. El nombre de salida se deriva del parámetro
-     * {@code outputFile} insertando "light" antes de la extensión
-     * (o al final si no hay extensión). Recomendado para simulaciones pesadas
-     * donde no se necesita resolución temporal máxima.
-     *
-     * @param outputFile   ruta base del archivo (p.ej. "out/run.txt")
-     *                     → se escribirá como "out/run_light.txt"
-     * @param seed         semilla (null → aleatorio)
-     * @param snapshotEvery intervalo (en eventos) para snapshots radiales en memoria;
-     *                     0 desactiva los snapshots
+     * Ejecuta la simulación en modo LIGERO: sólo escribe un frame cada 1000
+     * eventos. El nombre de salida se deriva insertando "_light" antes de la
+     * extensión. Recomendado para simulaciones largas con N grande donde el
+     * archivo denso resulta inmanejable.
      */
     public SimulationResult runLight(
             String outputFile,
-            Long   seed,
-            int    snapshotEvery) throws IOException {
+            Long   seed) throws IOException {
 
-        // Derivar nombre con "light" antes de la extensión
         String lightFile = null;
         if (outputFile != null) {
             int dot = outputFile.lastIndexOf('.');
@@ -121,7 +100,7 @@ public class Simulator {
             }
         }
 
-        return runInternal(lightFile, seed, /*writeEvery=*/1000, snapshotEvery,
+        return runInternal(lightFile, seed, /*writeEvery=*/1000,
                 /*analysisFile=*/null, Double.POSITIVE_INFINITY, /*stream=*/false);
     }
 
@@ -129,7 +108,6 @@ public class Simulator {
             String  outputFile,
             Long    seed,
             int     writeEvery,
-            int     snapshotEvery,
             String  analysisFile,
             double  radialSnapDt,
             boolean stream) throws IOException {
@@ -137,17 +115,6 @@ public class Simulator {
         particles = initParticles(seed);
         pq        = new PriorityQueue<>();
         tNow      = 0.0;
-        nUsed     = 0;
-
-        // En modo stream las listas quedan vacías (el resultado sigue respetando
-        // la API de SimulationResult, pero la data real vive en los archivos).
-        cfcHistory      = new ArrayList<>();
-        fuHistory       = new ArrayList<>();
-        radialSnapshots = new ArrayList<>();
-        if (!stream) {
-            cfcHistory.add(new double[]{0.0, 0});
-            fuHistory .add(new double[]{0.0, 0.0});
-        }
 
         // ── Cola inicial ──────────────────────────────────────────────────────
         for (int i = 0; i < N; i++) {
@@ -188,7 +155,6 @@ public class Simulator {
         }
 
         int  eventCount = 0;
-        int  cfc        = 0;
         long simStart   = System.nanoTime();
 
         // ── Bucle principal ───────────────────────────────────────────────────
@@ -204,7 +170,6 @@ public class Simulator {
             // evento, si el tiempo del evento cruza el próximo tick.
             if (aWriter != null) {
                 while (nextSnap <= ev.time && nextSnap <= tf) {
-                    // Congelar posiciones al instante nextSnap
                     double dtSnap = nextSnap - tNow;
                     if (dtSnap > 0) for (Particle p : particles) p.advance(dtSnap);
                     tNow = nextSnap;
@@ -228,34 +193,22 @@ public class Simulator {
                 }
                 case Event.OBS: {
                     boolean changed = bounceObs(particles[ev.i]);
-                    if (changed) {
-                        nUsed++;
-                        cfc++;
-                        if (stream) {
-                            if (aWriter != null)
-                                aWriter.printf(Locale.US, "EVT OBS %.8f %d%n", tNow, ev.i);
-                        } else {
-                            cfcHistory.add(new double[]{tNow, cfc});
-                        }
+                    if (changed && stream && aWriter != null) {
+                        aWriter.printf(Locale.US, "EVT OBS %.8f %d%n", tNow, ev.i);
                     }
                     involved = new int[]{ev.i};
                     break;
                 }
                 default: { // WALL
                     boolean changed = bounceWall(particles[ev.i]);
-                    if (changed) {
-                        nUsed--;
-                        if (stream && aWriter != null)
-                            aWriter.printf(Locale.US, "EVT WALL %.8f %d%n", tNow, ev.i);
+                    if (changed && stream && aWriter != null) {
+                        aWriter.printf(Locale.US, "EVT WALL %.8f %d%n", tNow, ev.i);
                     }
                     involved = new int[]{ev.i};
                     break;
                 }
             }
 
-            if (!stream) {
-                fuHistory.add(new double[]{tNow, (double) nUsed / N});
-            }
             eventCount++;
 
             // Reprogramación
@@ -277,21 +230,9 @@ public class Simulator {
             if (writer != null && eventCount % writeEvery == 0) {
                 writeFrame(writer, tNow);
             }
-
-            // Snapshots radiales por CONTADOR DE EVENTOS (sólo modo legacy)
-            if (!stream && snapshotEvery > 0 && eventCount % snapshotEvery == 0) {
-                double[][] snap = new double[N][5];
-                for (int k = 0; k < N; k++) {
-                    Particle p = particles[k];
-                    snap[k][0] = p.x;  snap[k][1] = p.y;
-                    snap[k][2] = p.vx; snap[k][3] = p.vy;
-                    snap[k][4] = p.state;
-                }
-                radialSnapshots.add(new Object[]{tNow, snap});
-            }
         }
 
-        // Completar snapshots pendientes hasta tf en modo stream
+        // Completar snapshots pendientes hasta tf
         if (aWriter != null) {
             while (nextSnap <= tf) {
                 double dtSnap = nextSnap - tNow;
@@ -306,8 +247,7 @@ public class Simulator {
         if (writer  != null) writer.close();
         if (aWriter != null) aWriter.close();
 
-        return new SimulationResult(
-                particles, cfcHistory, fuHistory, radialSnapshots, simTime, eventCount);
+        return new SimulationResult(simTime, eventCount);
     }
 
     /**
@@ -316,7 +256,6 @@ public class Simulator {
      * velocidad radial hacia el centro (R·v &lt; 0). El resto se omite.
      */
     private void writeAnalysisSnap(PrintWriter w, double t) {
-        // Primera pasada: contar
         int nFreshIn = 0;
         for (Particle p : particles) {
             if (p.state != Particle.FRESH) continue;
@@ -337,10 +276,6 @@ public class Simulator {
     //  Tiempos de colisión
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Tiempo hasta colisión entre las partículas i y j.
-     * Fórmula analítica exacta; retorna Double.NaN si no hay colisión futura.
-     */
     static double timePP(Particle pi, Particle pj) {
         double dx  = pj.x  - pi.x;
         double dy  = pj.y  - pi.y;
@@ -348,25 +283,21 @@ public class Simulator {
         double dvy = pj.vy - pi.vy;
 
         double dvdr = dvx * dx  + dvy * dy;
-        if (dvdr >= 0) return Double.NaN;            // se alejan
+        if (dvdr >= 0) return Double.NaN;
 
         double dvdv = dvx * dvx + dvy * dvy;
         if (dvdv == 0) return Double.NaN;
 
         double drdr = dx  * dx  + dy  * dy;
         double d    = dvdr * dvdr - dvdv * (drdr - SIGMA_PP * SIGMA_PP);
-        if (d < 0) return Double.NaN;                // se esquivan
+        if (d < 0) return Double.NaN;
 
         return -(dvdr + Math.sqrt(d)) / dvdv;
     }
 
-    /**
-     * Tiempo hasta colisión de la partícula p con el obstáculo central fijo.
-     * La geometría es idéntica a PP pero el obstáculo está en el origen (v=0).
-     */
     static double timeObs(Particle p) {
         double dvdr = p.vx * p.x  + p.vy * p.y;
-        if (dvdr >= 0) return Double.NaN;            // se aleja del origen
+        if (dvdr >= 0) return Double.NaN;
 
         double dvdv = p.vx * p.vx + p.vy * p.vy;
         double drdr = p.x  * p.x  + p.y  * p.y;
@@ -390,9 +321,8 @@ public class Simulator {
 
         double dvdr = p.vx * p.x  + p.vy * p.y;
         double drdr = p.x  * p.x  + p.y  * p.y;
-        // Para partícula dentro: drdr < σ² → d = dvdr² + dvdv·(σ²-drdr) > 0 siempre
         double d    = dvdr * dvdr - dvdv * (drdr - SIGMA_WALL * SIGMA_WALL);
-        if (d < 0) return Double.NaN;   // no debería ocurrir si la partícula está dentro
+        if (d < 0) return Double.NaN;
 
         double tc = (-dvdr + Math.sqrt(d)) / dvdv;
         return tc > EPS ? tc : Double.NaN;
@@ -402,34 +332,23 @@ public class Simulator {
     //  Operadores de colisión
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Colisión elástica entre dos partículas de masa igual (m=1).
-     *   J = 2·mi·mj / (σ·(mi+mj)) · (Δv·Δr)  →  con mi=mj=1: J = (Δv·Δr)/σ
-     */
     static void bouncePP(Particle pi, Particle pj) {
         double dx  = pj.x  - pi.x;
         double dy  = pj.y  - pi.y;
         double dvx = pj.vx - pi.vx;
         double dvy = pj.vy - pi.vy;
 
-        double J  = (dvx * dx + dvy * dy) / SIGMA_PP;   // = dvdr / σ
+        double J  = (dvx * dx + dvy * dy) / SIGMA_PP;
         double Jx = J * dx / SIGMA_PP;
         double Jy = J * dy / SIGMA_PP;
 
-        pi.vx += Jx;   pi.vy += Jy;    // vxi_nuevo = vxi + Jx/mi  (mi=1)
-        pj.vx -= Jx;   pj.vy -= Jy;    // vxj_nuevo = vxj - Jx/mj  (mj=1)
+        pi.vx += Jx;   pi.vy += Jy;
+        pj.vx -= Jx;   pj.vy -= Jy;
 
         pi.count++;
         pj.count++;
     }
 
-    /**
-     * Colisión elástica de la partícula con el obstáculo central fijo (masa infinita).
-     * Invierte la componente normal de la velocidad: v_nueva = v - 2·(v·en)·en
-     * en = posición/|posición|  (apunta del centro al punto de contacto)
-     *
-     * @return true si el estado cambió (fresca → usada)
-     */
     static boolean bounceObs(Particle p) {
         double r   = Math.sqrt(p.x * p.x + p.y * p.y);
         double enx = p.x / r;
@@ -446,15 +365,9 @@ public class Simulator {
         return changed;
     }
 
-    /**
-     * Colisión elástica de la partícula con el borde circular interior.
-     * Normal apunta hacia adentro del recinto: en = -posición/|posición|
-     *
-     * @return true si el estado cambió (usada → fresca)
-     */
     static boolean bounceWall(Particle p) {
         double r   = Math.sqrt(p.x * p.x + p.y * p.y);
-        double enx = -p.x / r;   // normal interior
+        double enx = -p.x / r;
         double eny = -p.y / r;
 
         double vn = p.vx * enx + p.vy * eny;
@@ -500,29 +413,23 @@ public class Simulator {
     //  Inicialización
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Coloca N partículas aleatoriamente en el anillo (2, 39) sin superposición.
-     * Se muestrea r² de forma uniforme para obtener distribución uniforme en área.
-     */
     private Particle[] initParticles(Long seed) {
         Random rng = (seed != null) ? new Random(seed) : new Random();
         Particle[] ps = new Particle[N];
 
-        double rMin2   = SIGMA_OBS  * SIGMA_OBS;    //  4.0
-        double rMax2   = SIGMA_WALL * SIGMA_WALL;   // 1521.0
-        double sigma2  = SIGMA_PP   * SIGMA_PP;     //  4.0
+        double rMin2   = SIGMA_OBS  * SIGMA_OBS;
+        double rMax2   = SIGMA_WALL * SIGMA_WALL;
+        double sigma2  = SIGMA_PP   * SIGMA_PP;
 
         for (int idx = 0; idx < N; idx++) {
             boolean placed = false;
             for (int attempt = 0; attempt < 500_000; attempt++) {
-                // Muestreo uniforme en área del anillo
                 double r2    = rMin2 + rng.nextDouble() * (rMax2 - rMin2);
                 double r     = Math.sqrt(r2);
                 double angle = rng.nextDouble() * 2.0 * Math.PI;
                 double x     = r * Math.cos(angle);
                 double y     = r * Math.sin(angle);
 
-                // Verificar no superposición
                 boolean ok = true;
                 for (int k = 0; k < idx; k++) {
                     double ddx = x - ps[k].x;

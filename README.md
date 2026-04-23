@@ -1,209 +1,124 @@
-# TP3_SDS
+# TP3_SDS — EDMD en recinto circular
 
-Simulador EDMD para recinto circular con obstáculo central, ahora organizado por paquetes y con un launcher gráfico en `Main`.
+Simulador de dinámica molecular basada en eventos (EDMD) para un recinto
+circular con obstáculo central fijo.
 
 - Java 11+
-- Sin dependencias externas de runtime
-- Compatible con scripts, `java -cp`, Maven e IntelliJ IDEA
+- Python 3 + numpy + matplotlib (sólo para los gráficos)
+- Sin dependencias Java externas
 
-## 1) Estructura nueva
+## Flujo
 
-```text
+```
+Simulate  →  simulations/sim_N_*_run_*.txt  +  results/timing.csv
+Analyze   →  results/cfc_*.txt, fu_*.txt, radial_*.txt
+plotter.py → figures/*.png
+Main       → visualizar una trayectoria de simulations/
+```
+
+`Simulate` limpia `simulations/` y `results/` antes de correr. `Analyze`
+sólo agrega los observables a `results/` (no borra `timing.csv`).
+
+## Estructura
+
+```
 src/
-  Main.java                    # launcher gráfico
+  Main.java                     # selector + visualizador
   simulation/
     Particle.java
     Event.java
     SimulationResult.java
-    Simulator.java
-    SimulationCli.java
+    Simulator.java              # motor EDMD (run, runStream, runLight)
+    Simulate.java               # entrypoint: 1.1 timing + 1.2-1.4 trayectorias
   analysis/
-    Analysis.java
+    Analyze.java                # entrypoint: recorre simulations/
+    SimulationAnalyzer.java     # cfc, fu, radial por archivo
   visualization/
-    Visualizer.java
+    Visualizer.java             # animador Swing
 
-scripts/                        # Todos los scripts aquí
+postprocess/
+  plotter.py                    # figuras 1.1 – 1.4
+
+scripts/
   compile.sh
-  run_sim.sh
-  run_analysis.sh
-  run_viz.sh
+  run.sh                        # pipeline completo
 
-pom.xml
-results/
-out/
+simulations/                    # generado por Simulate
+results/                        # generado por Simulate (timing.csv) + Analyze
+figures/                        # generado por plotter.py
 ```
 
-## 2) Launcher gráfico (`Main`)
-
-Abrí el proyecto en IntelliJ o ejecutá:
+## Uso rápido
 
 ```bash
 ./scripts/compile.sh
-java -cp out Main
+./scripts/run.sh                # compila, simula, analiza y grafica
+./scripts/run.sh --viz          # idem + abre el visualizador al final
 ```
 
-La UI incluye:
-
-- pestaña de **simulación** con todos los inputs del simulador
-- **perfiles predefinidos**: Tipo 1, Tipo 2, Tipo 3 y Benchmark
-- pestaña de **análisis** con selectores y parámetros
-- pestaña de **visualización** con archivo, intervalo y max frames
-- **consola embebida** para ver la salida textual del proceso
-- **botón Volver** cuando ejecutas simulación/análisis
-
-## 3) Cómo correr cada parte
-
-### A. Scripts (desde scripts/)
+## Paso a paso
 
 ```bash
 ./scripts/compile.sh
-./scripts/run_sim.sh -N 100 -tf 200 -s 42 -w 50 -o results/traj.txt
-./scripts/run_analysis.sh --all -N 100 -tf 1000 --runs 5
-./scripts/run_viz.sh results/traj.txt --interval 50 --max-frames 4000
-```
 
-### B. Java directo
+# 1) Simular (limpia simulations/ y results/, corre timing + trayectorias)
+java -cp out simulation.Simulate
 
-```bash
-mkdir -p out
-find src -name "*.java" -print0 | xargs -0 javac -d out -sourcepath src
+# 2) Analizar todas las trayectorias generadas
+java -cp out analysis.Analyze
 
+# 3) Graficar
+python3 postprocess/plotter.py --all
+
+# 4) (Opcional) Visualizar una trayectoria existente
 java -cp out Main
-java -cp out simulation.SimulationCli -N 100 -tf 200 -s 42 -w 50 -o results/traj.txt
-java -cp out analysis.Analysis --all -N 100 -tf 1000 --runs 5
-java -cp out visualization.Visualizer results/traj.txt --interval 50 --max-frames 4000
 ```
 
-### C. Maven
+## Configuración de las corridas
 
-```bash
-mvn compile
-mvn exec:java -Dexec.mainClass=Main
-mvn exec:java -Dexec.mainClass=simulation.SimulationCli -Dexec.args="-N 100 -tf 200 -s 42 -w 50 -o results/traj.txt"
-mvn exec:java -Dexec.mainClass=analysis.Analysis -Dexec.args="--all -N 100 -tf 1000 --runs 5"
-mvn exec:java -Dexec.mainClass=visualization.Visualizer -Dexec.args="results/traj.txt --interval 50 --max-frames 4000"
+Los parámetros viven dentro de `simulation.Simulate`:
+
+| Bloque          | Ns                         | Runs | tf [s] | Notas                     |
+|-----------------|----------------------------|------|--------|---------------------------|
+| Timing (1.1)    | 10,20,50,100,200,400,800   | 10   | 500    | usa `runStream` (sin I/O) |
+| Trayectorias    | 10,50,100,200,400,800      | 1    | 1500   | N≥300 → `runLight`        |
+
+Para cambiar Ns, runs o tf editá las constantes al principio de `Simulate.java`.
+
+## Main (visualizador)
+
+Lista las trayectorias encontradas en `simulations/`. Doble-click o
+"Abrir visualizador" para animarlas.
+
+Controles del visualizador:
+
+| Tecla   | Acción                      |
+|---------|-----------------------------|
+| ESPACIO | Pausar / reanudar           |
+| ← / →   | Frame anterior / siguiente  |
+| R       | Reiniciar                   |
+| Q       | Cerrar                      |
+
+## Formato de trayectoria
+
 ```
-
-### D. IntelliJ IDEA
-
-1. `File -> Open...` y elegir la carpeta del repo.
-2. Aceptar `Load Maven Project`.
-3. Verificar JDK 11+.
-4. Correr `Main` desde el gutter o crear Run Configurations.
-
-## 4) Parámetros de la simulación
-
-El launcher usa los mismos flags que la CLI:
-
-- `-N <int>`: número de partículas
-- `-tf <double>`: tiempo final
-- `-o <file>`: archivo de trayectoria
-- `-s <long>`: semilla opcional
-- `-w <int>`: escribir cada W eventos
-- `--snap-every <int>`: snapshots para perfiles radiales
-- `--no-output`: no escribir trayectoria
-
-Los botones de perfil cargan combinaciones rápidas de esos valores.
-
-## 5) Análisis
-
-Flags disponibles:
-
-- `--timing`
-- `--cfc`
-- `--fu`
-- `--radial`
-- `--all`
-- `-N <int>`
-- `-tf <double>`
-- `--runs <int>`
-- `--results-dir <dir>`
-
-Ejemplo:
-
-```bash
-java -cp out analysis.Analysis --cfc --fu -N 100 -tf 1000 --runs 5 --results-dir results
-```
-
-## 6) Visualización
-
-Uso:
-
-```bash
-java -cp out visualization.Visualizer <archivo> [--interval <ms>] [--max-frames <n>]
-```
-
-El intervalo por defecto se mantiene en `50 ms`.
-
-## 7) Formato de trayectoria
-
-```text
-N t_actual
-t x y vx vy estado
+N  t
+t  x  y  vx  vy  estado
 ...
 ```
 
-## 8) Salidas en `results/`
+- `estado`: 0 = fresca (verde), 1 = usada (violeta).
+- En modo `runLight` sólo se escribe un frame cada 1000 eventos y el nombre
+  lleva sufijo `_light`.
 
-- `timing.csv`
-- `cfc_run{k}.csv`
-- `cfc_summary.txt`
-- `fu_run{k}.csv`
-- `fu_summary.txt`
-- `radial.csv`
+## Salidas
 
-## 9) Troubleshooting
-
-### IntelliJ no reconoce el proyecto
-
-- abrir la raíz del repo, no `src/`
-- recargar Maven
-- verificar JDK 11+
-
-### `run_*.sh` falla
-
-- correr `./scripts/compile.sh`
-- dar permisos si hace falta:
-
-```bash
-chmod +x scripts/compile.sh scripts/run_sim.sh scripts/run_analysis.sh scripts/run_viz.sh
-```
-
-### El visualizador muestra pocos frames
-
-Eso depende del archivo generado y de `-w`:
-
-- si `-w 50`, solo se escribe un frame cada 50 eventos
-- si querés más frames, usá `-w 1` o un valor más chico
-- `--max-frames` también puede submuestrear si es muy bajo
-
-### La animación se ve robótica
-
-- mantener `--interval 50`
-- bajar `-w`
-- subir `--max-frames`
-
-## 10) Flujos recomendados
-
-### Simulación rápida
-
-```bash
-./scripts/compile.sh
-./scripts/run_sim.sh -N 100 -tf 5 --no-output
-```
-
-### Simulación para visualización
-
-```bash
-./scripts/compile.sh
-./scripts/run_sim.sh -N 100 -tf 400 -w 1 -o results/traj_smooth.txt
-./scripts/run_viz.sh results/traj_smooth.txt --interval 50 --max-frames 12000
-```
-
-### Análisis completo
-
-```bash
-./scripts/compile.sh
-./scripts/run_analysis.sh --all -N 100 -tf 1000 --runs 5
-```
-
+| Archivo                               | Origen     | Contenido                          |
+|---------------------------------------|------------|-----------------------------------|
+| `simulations/sim_N_*_run_*.txt`       | Simulate   | trayectoria densa                 |
+| `simulations/sim_N_*_run_*_light.txt` | Simulate   | trayectoria ligera (N≥300)        |
+| `results/timing.csv`                  | Simulate   | N, avg_time_s, std_time_s, events |
+| `results/cfc_*.txt`                   | Analyze    | colisiones fresca→usada acumuladas|
+| `results/fu_*.txt`                    | Analyze    | fracción de usadas                |
+| `results/radial_*.txt`                | Analyze    | perfiles radiales                 |
+| `figures/*.png`                       | plotter.py | gráficos 1.1 – 1.4                |

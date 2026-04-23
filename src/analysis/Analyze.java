@@ -6,43 +6,33 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
+/**
+ * Recorre todos los archivos de trayectoria en simulations/ y genera los
+ * observables (cfc, fu, radial) en results/. No borra results/: lo limpia
+ * Simulate antes de arrancar.
+ */
 public class Analyze {
     public static void main(String[] args) throws IOException {
-        // Limpiar el directorio results antes de la ejecución
-        Path resultsDir = Paths.get("results");
-        if (Files.exists(resultsDir)) {
-            Files.walk(resultsDir)
-                .sorted((a, b) -> b.compareTo(a)) // Orden inverso para eliminar archivos antes de directorios
-                .forEach(path -> {
-                    try {
-                        Files.delete(path);
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-                });
-        }
-
-//        int[] nValues = {10, 50, 100, 200, 400, 800};
-//        for(int n : nValues) {
-//            for(int run = 1; run <= 5; run++) {
-//                SimulationAnalyzer.analyze("simulations/sim_N_" + n + "_run_" + run + ".txt");
-//            }
-//        }
-
         Path simulationsDir = Paths.get("simulations");
+        Path resultsDir     = Paths.get("results");
+        Files.createDirectories(resultsDir);
+
         if (!Files.exists(simulationsDir)) {
-            System.err.println("No se encontró la carpeta simulations.");
+            System.err.println("No se encontró la carpeta simulations/. Corré Simulate primero.");
             return;
         }
 
-        List<Path> files = Files.list(simulationsDir)
-                .filter(p -> p.toString().endsWith(".txt"))
-                .sorted()
-                .collect(Collectors.toList());
+        List<Path> files;
+        try (Stream<Path> s = Files.list(simulationsDir)) {
+            files = s.filter(p -> p.toString().endsWith(".txt"))
+                     .sorted()
+                     .collect(Collectors.toList());
+        }
 
         if (files.isEmpty()) {
-            System.out.println("No se encontraron archivos en simulations/");
+            System.out.println("No se encontraron trayectorias en simulations/");
             return;
         }
 
