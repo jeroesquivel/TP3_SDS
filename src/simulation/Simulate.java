@@ -26,8 +26,8 @@ public class Simulate {
     // ── Configuración trayectorias (secciones 1.2 – 1.4) ─────────────────────
     private static final int[]  TRAJ_N       = {10, 50, 100, 200, 400, 800};
     private static final int    TRAJ_RUNS    = 1;
-    private static final double TRAJ_TF      = 1500.0;
-    private static final int    TRAJ_LIGHT_N = 300;   // N≥ esto → runLight
+    private static final double TRAJ_TF      = 2500.0;
+    private static final int    TRAJ_LIGHT_N = 400;   // N≥ esto → runLight
 
     public static void main(String[] args) throws IOException {
         Path simsDir    = Paths.get("simulations");
