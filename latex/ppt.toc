@@ -1,0 +1,6 @@
+\babel@toc {spanish}{}\relax 
+\beamer@sectionintoc {1}{Introducción}{2}{0}{1}
+\beamer@sectionintoc {2}{Implementación}{5}{0}{2}
+\beamer@sectionintoc {3}{Simulaciones}{9}{0}{3}
+\beamer@sectionintoc {4}{Resultados}{15}{0}{4}
+\beamer@sectionintoc {5}{Conclusiones}{30}{0}{5}

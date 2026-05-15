@@ -6,3 +6,6 @@ results/
 *.txt
 *.md
 *.json
+*.Identifier
+*.mp4
+*.mov
